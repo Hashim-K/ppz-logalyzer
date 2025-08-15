@@ -1,0 +1,280 @@
+<PRD>
+
+# PPZ-Logalyzer Product Requirements Document
+
+## 1. Introduction
+
+This Product Requirements Document (PRD) outlines the specifications, features, and technical requirements for ppz-logalyzer, a comprehensive web application designed for parsing, visualizing, and inspecting paparazziUAV flight logs. This document serves as the primary reference for development teams, stakeholders, and quality assurance to ensure successful delivery of a high-performance log analysis platform.
+
+The ppz-logalyzer system addresses the critical need for efficient flight log analysis in the paparazziUAV ecosystem, providing users with powerful tools to process, analyze, and visualize complex flight data through an intuitive web interface.
+
+## 2. Product overview
+
+ppz-logalyzer is a microservices-based web application that combines a modern React frontend with a high-performance Rust backend to deliver seamless flight log analysis capabilities. The system automatically detects and parses paparazziUAV log file schemas, processes raw .data files, and presents the information through interactive visualizations and configurable dashboards.
+
+The application features real-time file monitoring, advanced filtering capabilities, customizable chart generation, and comprehensive session management. Built with performance and scalability in mind, ppz-logalyzer leverages containerization for easy deployment and shared file systems for optimized data transfer between services.
+
+## 3. Goals and objectives
+
+### 3.1 Primary objectives
+- Provide sub-second parsing performance for typical paparazziUAV log files
+- Deliver an intuitive, accessible web interface requiring minimal learning curve
+- Enable real-time monitoring and processing of flight logs as they are generated
+- Support comprehensive data visualization with both pre-configured and custom chart options
+- Ensure reliable, memory-safe processing of large log files without system crashes
+
+### 3.2 Business goals
+- Reduce flight log analysis time by 80% compared to manual inspection methods
+- Support concurrent processing of multiple log files to increase operational efficiency
+- Enable sharing of analysis sessions through URL-based navigation
+- Provide robust error handling to minimize data loss during processing failures
+
+### 3.3 Technical goals
+- Achieve < 100ms response time for cached data requests
+- Maintain minimal memory footprint through Rust's zero-cost abstractions
+- Implement automatic schema detection and version management
+- Ensure seamless frontend-backend communication with minimal loading delays
+
+## 4. Target audience
+
+### 4.1 Primary users
+- **UAV Operators**: Pilots and operators using paparazziUAV systems who need to analyze flight performance, troubleshoot issues, and validate mission data
+- **Flight Test Engineers**: Technical personnel responsible for analyzing flight test data, identifying performance metrics, and generating reports
+- **Research Teams**: Academic and commercial researchers using paparazziUAV platforms for data collection and analysis
+
+### 4.2 Secondary users
+- **System Administrators**: IT personnel responsible for deploying and maintaining the log analysis infrastructure
+- **Quality Assurance Teams**: Personnel validating flight operations and ensuring compliance with safety standards
+
+## 5. Features and requirements
+
+### 5.1 Core features
+- **Automatic Log Processing**: Schema detection, file parsing, and data generation
+- **Real-time Monitoring**: Live file system watching and instant processing
+- **Interactive Visualization**: Customizable charts, graphs, and data tables
+- **Session Management**: Complete CRUD operations with persistent state
+- **Advanced Filtering**: Multi-dimensional filtering by message types, aircraft, and time ranges
+- **Export Capabilities**: Multiple format export with configurable parameters
+
+### 5.2 User interface features
+- **Modern Web Interface**: Built with Next.js 15, TypeScript, and Shadcn UI components
+- **Responsive Design**: Full functionality across desktop, tablet, and mobile devices
+- **Theming Support**: Dark/light mode with automatic system detection
+- **URL-based Navigation**: Shareable links with persistent session state
+- **Real-time Progress**: Live upload indicators and processing status updates
+
+### 5.3 Performance features
+- **Concurrent Processing**: Multi-threaded log file processing
+- **Smart Caching**: Memory-efficient caching with configurable policies
+- **Version Management**: Hash-based change detection and automatic reprocessing
+- **Optimized Data Transfer**: Shared file systems to minimize serialization overhead
+
+## 6. User stories and acceptance criteria
+
+### 6.1 Authentication and access control
+
+**ST-101: User authentication**
+- **As a** UAV operator
+- **I want to** securely access the ppz-logalyzer system
+- **So that** my flight data remains protected and access is controlled
+- **Acceptance criteria:**
+  - System provides secure login mechanism
+  - User sessions are properly managed and expired after inactivity
+  - Authentication state persists across browser sessions
+  - Failed login attempts are logged and rate-limited
+
+### 6.2 File upload and processing
+
+**ST-102: Log file upload**
+- **As a** flight test engineer
+- **I want to** upload paparazziUAV log files through the web interface
+- **So that** I can analyze flight data without manual file transfers
+- **Acceptance criteria:**
+  - Drag-and-drop file upload functionality works
+  - Multiple file selection and upload supported
+  - Real-time progress indicators show upload status
+  - File validation occurs before processing begins
+  - Error messages displayed for invalid file formats
+
+**ST-103: Automatic schema detection**
+- **As a** UAV operator
+- **I want to** have XML schemas automatically detected and parsed
+- **So that** I don't need to manually configure file interpretation settings
+- **Acceptance criteria:**
+  - System automatically reads XML schema files
+  - Schema validation occurs before data parsing
+  - Error handling for malformed or missing schemas
+  - Schema version changes trigger automatic reprocessing
+
+**ST-104: Real-time file monitoring**
+- **As a** flight test engineer
+- **I want to** automatically process new log files as they appear in monitored directories
+- **So that** I can analyze data in real-time during flight operations
+- **Acceptance criteria:**
+  - File system monitoring detects new files instantly
+  - Hash-based change detection prevents duplicate processing
+  - Processing queue manages multiple concurrent files
+  - Status updates provided for each monitored file
+
+### 6.3 Data visualization and analysis
+
+**ST-105: Interactive message tables**
+- **As a** UAV operator
+- **I want to** view and filter message data in interactive tables
+- **So that** I can quickly locate specific flight events and data points
+- **Acceptance criteria:**
+  - Sortable columns for all message attributes
+  - Multi-select filtering for message types and aircraft
+  - Text search functionality across message content
+  - Pagination for large datasets
+  - Export filtered results to multiple formats
+
+**ST-106: Custom chart creation**
+- **As a** research team member
+- **I want to** create custom charts with configurable data series
+- **So that** I can visualize specific relationships in the flight data
+- **Acceptance criteria:**
+  - Interactive chart builder with drag-and-drop functionality
+  - Support for multiple chart types (line, scatter, bar, etc.)
+  - Configurable axes, colors, and styling options
+  - Save and share custom chart configurations
+  - Export charts in multiple image formats
+
+**ST-107: Default graph templates**
+- **As a** UAV operator
+- **I want to** access pre-configured chart templates for common analyses
+- **So that** I can quickly generate standard visualizations without setup
+- **Acceptance criteria:**
+  - Library of default chart templates available
+  - Templates cover common flight analysis scenarios
+  - One-click application of templates to current session data
+  - Ability to modify and save custom versions of templates
+
+### 6.4 Session management
+
+**ST-108: Session CRUD operations**
+- **As a** flight test engineer
+- **I want to** create, save, load, and delete analysis sessions
+- **So that** I can manage multiple flight analysis projects efficiently
+- **Acceptance criteria:**
+  - Create new sessions with descriptive names and metadata
+  - Save session state including filters, charts, and configurations
+  - Load existing sessions with complete state restoration
+  - Delete sessions with confirmation dialogs
+  - Session list with search and sorting capabilities
+
+**ST-109: Shareable session links**
+- **As a** research team member
+- **I want to** share analysis sessions through URL links
+- **So that** team members can collaborate on flight data analysis
+- **Acceptance criteria:**
+  - Generate unique URLs for each session state
+  - URLs preserve all filters, charts, and view configurations
+  - Links remain valid for reasonable time periods
+  - Permission controls for shared sessions
+
+### 6.5 System administration
+
+**ST-110: Performance monitoring**
+- **As a** system administrator
+- **I want to** monitor system performance and resource usage
+- **So that** I can ensure optimal operation and plan capacity
+- **Acceptance criteria:**
+  - Real-time metrics for CPU, memory, and disk usage
+  - Processing queue status and throughput statistics
+  - Error logs with detailed diagnostic information
+  - Performance alerts for resource thresholds
+
+### 6.6 Database modeling
+
+**ST-111: Session data persistence**
+- **As a** system
+- **I want to** efficiently store and retrieve session data, user preferences, and processed log metadata
+- **So that** users can maintain persistent sessions and the system can optimize performance
+- **Acceptance criteria:**
+  - Database schema supports user sessions with metadata
+  - Efficient indexing for fast session retrieval
+  - User preference storage with default fallbacks
+  - Log file metadata tracking with hash-based deduplication
+  - Data migration capabilities for schema updates
+
+### 6.7 Error handling and recovery
+
+**ST-112: Malformed file handling**
+- **As a** UAV operator
+- **I want to** receive clear error messages for malformed or corrupted log files
+- **So that** I can identify and resolve data quality issues
+- **Acceptance criteria:**
+  - Detailed error messages identify specific file problems
+  - Partial parsing continues when possible
+  - Error logs maintain detailed diagnostic information
+  - Recovery suggestions provided for common issues
+
+## 7. Technical requirements / Stack
+
+### 7.1 Frontend technology stack
+- **Framework**: Next.js 15 with TypeScript for type safety and modern React features
+- **UI Components**: Shadcn and Radix UI for accessible, customizable components
+- **Styling**: CSS modules with dark/light theme support and system detection
+- **State Management**: React Context and URL-based state for session persistence
+- **Charts**: Recharts or D3.js for interactive data visualization
+- **HTTP Client**: Fetch API with WebSocket support for real-time updates
+
+### 7.2 Backend technology stack
+- **Language**: Rust for maximum performance, memory safety, and concurrency
+- **Web Framework**: Axum for high-performance async HTTP handling
+- **Serialization**: Serde for efficient JSON/XML processing
+- **File I/O**: Tokio for asynchronous file operations and monitoring
+- **Hashing**: Blake3 for fast file change detection
+- **Database**: SQLite or PostgreSQL for session and metadata storage
+- **Caching**: In-memory caching with configurable eviction policies
+
+### 7.3 Infrastructure requirements
+- **Containerization**: Docker containers for both frontend and backend services
+- **Orchestration**: Docker Compose for unified deployment configuration
+- **File Storage**: Shared volumes for optimized data transfer between services
+- **Networking**: Internal container networking with exposed HTTP/WebSocket endpoints
+- **Monitoring**: Prometheus metrics and structured logging
+
+### 7.4 Performance requirements
+- **Processing Speed**: Sub-second parsing for files up to 100MB
+- **Memory Usage**: Maximum 2GB RAM usage for typical workloads
+- **Response Time**: < 100ms for cached data requests
+- **Concurrent Users**: Support for 10+ simultaneous users
+- **File Processing**: Concurrent processing of up to 5 files simultaneously
+
+## 8. Design and user interface
+
+### 8.1 Design principles
+- **Simplicity**: Clean, uncluttered interface focusing on essential functionality
+- **Accessibility**: WCAG 2.1 AA compliance with keyboard navigation and screen reader support
+- **Responsiveness**: Fluid design adapting to screen sizes from 320px to 4K displays
+- **Performance**: Optimized rendering with lazy loading and virtualization for large datasets
+- **Consistency**: Unified design language across all components and views
+
+### 8.2 Layout structure
+- **Navigation Bar**: Primary navigation with session selector and user preferences
+- **Sidebar**: Collapsible panel for filters, settings, and quick actions
+- **Main Content Area**: Primary workspace for tables, charts, and visualizations
+- **Status Bar**: Processing indicators, error notifications, and system status
+
+### 8.3 Color scheme and theming
+- **Light Theme**: High contrast colors with blue accent (#0066CC) for primary actions
+- **Dark Theme**: Dark background (#1a1a1a) with light text and blue accents for reduced eye strain
+- **System Detection**: Automatic theme switching based on user's OS preferences
+- **Accessibility**: Minimum 4.5:1 contrast ratio for all text elements
+
+### 8.4 Interactive elements
+- **File Upload Zone**: Prominent drag-and-drop area with visual feedback
+- **Data Tables**: Sortable, filterable tables with hover states and selection
+- **Charts**: Interactive visualizations with tooltips, zoom, and pan capabilities
+- **Form Controls**: Consistent styling for inputs, selects, and buttons
+- **Modal Dialogs**: Centered overlays for confirmations and detailed views
+
+### 8.5 Mobile considerations
+- **Touch Targets**: Minimum 44px touch targets for mobile interaction
+- **Simplified Navigation**: Collapsible menus and priority-based content display
+- **Gesture Support**: Swipe navigation and pinch-to-zoom for charts
+- **Performance**: Optimized rendering for lower-powered mobile devices
+
+</PRD>
