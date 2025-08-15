@@ -1,0 +1,223 @@
+version: '3.8'
+
+# Production Docker Compose for Ubuntu 24.04 LTS VPS deployment
+# Optimized for resource efficiency and security
+
+services:
+  # PostgreSQL Database - Production optimized
+  database:
+    image: postgres:16
+    container_name: ppz-logalyzer-db-prod
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ppz_logalyzer
+      POSTGRES_USER: ppz_user
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - ppz-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ppz_user -d ppz_logalyzer"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    # Production resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+    # Security enhancements
+    security_opt:
+      - no-new-privileges:true
+    # No exposed ports (internal network only)
+
+  # Redis for caching - Production optimized
+  redis:
+    image: redis:7
+    container_name: ppz-logalyzer-redis-prod
+    restart: unless-stopped
+    command: >
+      redis-server 
+      --appendonly yes 
+      --maxmemory 128mb 
+      --maxmemory-policy allkeys-lru
+      --save 900 1
+      --save 300 10
+      --save 60 10000
+    volumes:
+      - redis_data:/data
+    networks:
+      - ppz-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.25'
+        reservations:
+          memory: 64M
+          cpus: '0.1'
+    security_opt:
+      - no-new-privileges:true
+
+  # Rust Backend API - Production optimized
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        RUST_VERSION: "1.82.0"
+    container_name: ppz-logalyzer-backend-prod
+    restart: unless-stopped
+    environment:
+      # Database configuration
+      DATABASE_URL: postgresql://ppz_user:${DB_PASSWORD}@database:5432/ppz_logalyzer
+      REDIS_URL: redis://redis:6379
+      
+      # Application configuration
+      RUST_LOG: info
+      PORT: 8000
+      HOST: 0.0.0.0
+      
+      # File processing configuration
+      MAX_FILE_SIZE: 104857600  # 100MB
+      UPLOAD_DIR: /app/uploads
+      PROCESSED_DIR: /app/processed
+      CACHE_DIR: /app/cache
+      
+      # Security
+      JWT_SECRET: ${JWT_SECRET}
+      
+      # Production optimizations
+      RUST_BACKTRACE: 0
+      
+    volumes:
+      - uploads:/app/uploads
+      - processed:/app/processed
+      - cache:/app/cache
+      - logs:/app/logs
+    networks:
+      - ppz-network
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+    security_opt:
+      - no-new-privileges:true
+
+  # Next.js Frontend - Production optimized
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: ppz-logalyzer-frontend-prod
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      # Internal API URL for server-side requests
+      API_URL: http://backend:8000
+    volumes:
+      - uploads:/app/uploads:ro
+    networks:
+      - ppz-network
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+    security_opt:
+      - no-new-privileges:true
+
+  # Nginx Reverse Proxy - Production load balancer
+  nginx:
+    image: nginx:alpine
+    container_name: ppz-logalyzer-nginx-prod
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./nginx/logs:/var/log/nginx
+    networks:
+      - ppz-network
+    depends_on:
+      - frontend
+      - backend
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.25'
+        reservations:
+          memory: 64M
+          cpus: '0.1'
+    security_opt:
+      - no-new-privileges:true
+
+# Volumes for persistent data
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  uploads:
+    driver: local
+  processed:
+    driver: local
+  cache:
+    driver: local
+  logs:
+    driver: local
+
+# Internal network for service communication
+networks:
+  ppz-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
