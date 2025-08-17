@@ -3,20 +3,15 @@ use axum::{
     http::StatusCode,
     response::Json,
     routing::get,
-    Router,
 };
-use ppz_logalyzer_api::{db, router};
+use ppz_logalyzer_api::{db, routes};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::env;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tower_http::cors::CorsLayer;
-use tracing::{info, warn, error};
-
-#[derive(Clone)]
-struct AppState {
-    db_pool: db::DbPool,
-}
+use tracing::{info, error};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -56,15 +51,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
 
-    let state = AppState { db_pool };
+    // Create application state
+    let app_state = Arc::new(routes::AppState { db: db_pool.clone() });
 
     // Build our application with routes
-    let app = Router::new()
+    let app = routes::router()
         .route("/", get(root))
         .route("/health", get(health_check))
         .route("/metrics", get(metrics))
         .layer(CorsLayer::permissive())
-        .with_state(state);
+        .with_state(app_state);
+
+    // Get port from environment or default to 8080
+    let port = std::env::var("PORT").unwrap_or_else(|_| "8080".to_string());
+    let addr: SocketAddr = format!("0.0.0.0:{}", port).parse()?;
 
     // Get port from environment or default to 8080
     let port = std::env::var("PORT").unwrap_or_else(|_| "8080".to_string());
@@ -89,10 +89,10 @@ async fn root() -> Json<Value> {
     }))
 }
 
-// Health check endpoint for Docker and monitoring
-async fn health_check(State(state): State<AppState>) -> Result<Json<Value>, StatusCode> {
+// Health check endpoint for Docker and monitoring  
+async fn health_check(State(state): State<Arc<routes::AppState>>) -> Result<Json<Value>, StatusCode> {
     // Check database connection
-    let db_status = match db::check_database_connection(&state.db_pool).await {
+    let db_status = match db::check_database_connection(&state.db).await {
         Ok(_) => "healthy",
         Err(_) => "unhealthy",
     };
@@ -108,7 +108,7 @@ async fn health_check(State(state): State<AppState>) -> Result<Json<Value>, Stat
         "version": "0.1.0",
         "checks": {
             "database": db_status,
-            "file_system": "not_implemented",
+            "file_system": "not_implemented", 
             "memory": "ok"
         }
     });
@@ -121,7 +121,7 @@ async fn health_check(State(state): State<AppState>) -> Result<Json<Value>, Stat
 }
 
 // Basic metrics endpoint for Prometheus monitoring
-async fn metrics(State(_state): State<AppState>) -> Json<Value> {
+async fn metrics(State(_state): State<Arc<routes::AppState>>) -> Json<Value> {
     // TODO: Implement proper Prometheus metrics
     // For now, return basic system information
     
