@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::prelude::*;
 use uuid::Uuid;
 use chrono::{DateTime, Utc};
-use std::net::IpAddr;
+use ipnetwork::IpNetwork;
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct UserSession {
@@ -13,7 +13,7 @@ pub struct UserSession {
     pub expires_at: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-    pub ip_address: Option<IpAddr>,
+    pub ip_address: Option<IpNetwork>,
     pub user_agent: Option<String>,
     pub is_active: bool,
 }
@@ -21,7 +21,7 @@ pub struct UserSession {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateSessionRequest {
     pub user_id: Uuid,
-    pub ip_address: Option<IpAddr>,
+    pub ip_address: Option<IpNetwork>,
     pub user_agent: Option<String>,
     pub expires_in_seconds: Option<i64>, // Default to 24 hours if None
 }

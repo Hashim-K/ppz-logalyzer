@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Multipart, State, Path},
+    extract::{Multipart, State, Path, Request, ConnectInfo},
     http::StatusCode,
     response::Json,
     routing::{get, post},
@@ -9,11 +9,14 @@ use chrono::{DateTime, Utc, NaiveDate};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
-use std::{path::Path as StdPath, sync::Arc};
+use std::{path::Path as StdPath, sync::Arc, net::SocketAddr};
 use tokio::fs;
 use tracing::{error, info, warn};
 use uuid::Uuid;
+use ipnetwork::IpNetwork;
 
+use crate::auth::{AuthError, UserService, get_current_user};
+use crate::models::{CreateUserRequest, LoginRequest, UserResponse, SessionResponse};
 use crate::schema::{SchemaManager};
 // use crate::processing::{FileProcessor, ProcessingResult, ProcessingStatus};
 
@@ -544,12 +547,131 @@ async fn detect_schema(
     }
 }
 
+// Authentication route handlers
+
+/// Register a new user
+async fn register(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<CreateUserRequest>,
+) -> Result<Json<ApiResponse<UserResponse>>, StatusCode> {
+    let user_service = UserService::new();
+    
+    match user_service.create_user(&state.db, request).await {
+        Ok(user) => Ok(Json(ApiResponse {
+            success: true,
+            data: Some(user),
+            message: "User created successfully".to_string(),
+        })),
+        Err(AuthError::InvalidCredentials) => Err(StatusCode::CONFLICT), // Username/email already exists
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
+/// Login user
+async fn login(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Json(request): Json<LoginRequest>,
+) -> Result<Json<ApiResponse<LoginResponse>>, StatusCode> {
+    let user_service = UserService::new();
+    let ip_address = Some(IpNetwork::from(addr.ip()));
+    let user_agent = None; // TODO: Extract from headers
+    
+    match user_service.login(&state.db, request, ip_address, user_agent).await {
+        Ok((user, session)) => Ok(Json(ApiResponse {
+            success: true,
+            data: Some(LoginResponse { user, session }),
+            message: "Login successful".to_string(),
+        })),
+        Err(AuthError::InvalidCredentials) => Err(StatusCode::UNAUTHORIZED),
+        Err(AuthError::AccountLocked) => Err(StatusCode::LOCKED),
+        Err(AuthError::UserNotActive) => Err(StatusCode::FORBIDDEN),
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
+/// Logout user (invalidate session)
+async fn logout(
+    State(state): State<Arc<AppState>>,
+    request: Request,
+) -> Result<Json<ApiResponse<()>>, StatusCode> {
+    let claims = get_current_user(&request).ok_or(StatusCode::UNAUTHORIZED)?;
+    let session_id = Uuid::parse_str(&claims.jti).map_err(|_| StatusCode::UNAUTHORIZED)?;
+    
+    let user_service = UserService::new();
+    match user_service.logout(&state.db, session_id).await {
+        Ok(()) => Ok(Json(ApiResponse {
+            success: true,
+            data: Some(()),
+            message: "Logged out successfully".to_string(),
+        })),
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
+/// Get current user profile
+async fn profile(
+    State(state): State<Arc<AppState>>,
+    request: Request,
+) -> Result<Json<ApiResponse<UserResponse>>, StatusCode> {
+    let claims = get_current_user(&request).ok_or(StatusCode::UNAUTHORIZED)?;
+    let user_id = Uuid::parse_str(&claims.sub).map_err(|_| StatusCode::UNAUTHORIZED)?;
+    
+    let user_service = UserService::new();
+    match user_service.get_user(&state.db, user_id).await {
+        Ok(user) => Ok(Json(ApiResponse {
+            success: true,
+            data: Some(user),
+            message: "User profile retrieved".to_string(),
+        })),
+        Err(_) => Err(StatusCode::NOT_FOUND),
+    }
+}
+
+/// Refresh session token
+async fn refresh_token(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<RefreshTokenRequest>,
+) -> Result<Json<ApiResponse<SessionResponse>>, StatusCode> {
+    let user_service = UserService::new();
+    
+    match user_service.refresh_session(&state.db, request.refresh_token).await {
+        Ok(session) => Ok(Json(ApiResponse {
+            success: true,
+            data: Some(session),
+            message: "Token refreshed successfully".to_string(),
+        })),
+        Err(AuthError::InvalidToken) => Err(StatusCode::UNAUTHORIZED),
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
+// Response types for authentication
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoginResponse {
+    pub user: UserResponse,
+    pub session: SessionResponse,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RefreshTokenRequest {
+    pub refresh_token: String,
+}
+
 /// Build the application router.
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/healthz", get(healthz))
         .route("/health", get(health))
         .route("/", get(root))
+        // Authentication routes
+        .route("/api/auth/register", post(register))
+        .route("/api/auth/login", post(login))
+        .route("/api/auth/logout", post(logout))
+        .route("/api/auth/profile", get(profile))
+        .route("/api/auth/refresh", post(refresh_token))
+        // File management routes
         .route("/api/files/upload", post(upload_log_files))
         .route("/api/files", get(list_log_files))
         .route("/api/files/{file_id}", get(get_log_file))

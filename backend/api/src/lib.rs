@@ -1,5 +1,6 @@
 //! api lib — main backend logic for ppz-logalyzer
 
+pub mod auth;
 pub mod db;
 pub mod models;
 // pub mod processing; // File processing pipeline
