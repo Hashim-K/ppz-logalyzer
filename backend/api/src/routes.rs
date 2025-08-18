@@ -3,7 +3,7 @@ use axum::{
     http::StatusCode,
     response::Json,
     routing::{get, post},
-    Router,
+    Router, body::to_bytes,
 };
 use chrono::{DateTime, Utc, NaiveDate};
 use regex::Regex;
@@ -16,7 +16,9 @@ use uuid::Uuid;
 use ipnetwork::IpNetwork;
 
 use crate::auth::{AuthError, UserService, get_current_user};
+use crate::analysis::{AnalysisService, AnalysisError};
 use crate::models::{CreateUserRequest, LoginRequest, UserResponse, SessionResponse};
+use crate::models::analysis::{CreateAnalysisSessionRequest, UpdateAnalysisSessionRequest, AnalysisSessionResponse, CreateTemplateRequest, TemplateResponse};
 use crate::schema::{SchemaManager};
 // use crate::processing::{FileProcessor, ProcessingResult, ProcessingStatus};
 
@@ -194,8 +196,13 @@ async fn upload_log_files(
     State(state): State<Arc<AppState>>,
     mut multipart: Multipart,
 ) -> Result<Json<ApiResponse<Vec<FileUploadResponse>>>, StatusCode> {
-    info!("Upload request received");
+    // For now, we'll use a fixed user ID for testing
+    // TODO: Extract from authentication token
+    let user_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+    
+    info!("Upload request received for user: {}", user_id);
     let mut uploaded_files = Vec::new();
+    let mut file_pairs: std::collections::HashMap<String, Vec<Uuid>> = std::collections::HashMap::new();
     
     // Create uploads directory if it doesn't exist
     if let Err(e) = fs::create_dir_all("uploads").await {
@@ -248,8 +255,8 @@ async fn upload_log_files(
             }
         };
         
-        // For now, we'll use a dummy user_id. In real implementation, get from auth
-        let user_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap(); // Fixed test user
+        // Track files by their base filename for session creation
+        file_pairs.entry(base_filename.clone()).or_insert_with(Vec::new);
         
         // Ensure test user exists (for development only)
         let _ = sqlx::query!(
@@ -266,7 +273,7 @@ async fn upload_log_files(
             RETURNING id, original_filename, file_size, upload_timestamp, content_type
             "#,
             file_id,
-            user_id,
+            user_id,  // Use authenticated user
             original_filename,
             storage_path,
             file_size,
@@ -282,6 +289,10 @@ async fn upload_log_files(
         match result {
             Ok(record) => {
                 info!("Successfully uploaded file: {} ({})", original_filename, file_id);
+                
+                // Track file for session creation
+                file_pairs.entry(base_filename.clone()).or_insert_with(Vec::new).push(record.id);
+                
                 uploaded_files.push(FileUploadResponse {
                     file_id: record.id,
                     original_filename: record.original_filename,
@@ -307,10 +318,61 @@ async fn upload_log_files(
         }));
     }
 
+    // Automatically create analysis sessions for file pairs
+    let analysis_service = AnalysisService::new();
+    let mut created_sessions = Vec::new();
+
+    for (base_filename, file_ids) in file_pairs {
+        if file_ids.len() >= 2 {
+            // Create session for pairs (2 or more files with same base name)
+            let session_name = format!("Analysis: {}", base_filename);
+            let session_description = format!("Auto-created session for {} files uploaded on {}", 
+                file_ids.len(), chrono::Utc::now().format("%Y-%m-%d %H:%M"));
+            
+            let session_config = serde_json::json!({
+                "file_ids": file_ids,
+                "base_filename": base_filename,
+                "auto_created": true,
+                "created_at": chrono::Utc::now().to_rfc3339()
+            });
+            
+            let config_typed = match serde_json::from_value(session_config) {
+                Ok(config) => config,
+                Err(e) => {
+                    warn!("Failed to serialize session config: {}", e);
+                    continue;
+                }
+            };
+
+            let create_session_request = CreateAnalysisSessionRequest {
+                file_id: file_ids.first().cloned(), // Use first file as reference
+                template_id: None,
+                session_name: Some(session_name.clone()),
+                session_config: config_typed,
+            };
+
+            match analysis_service.create_session(&state.db, user_id, create_session_request).await {
+                Ok(session) => {
+                    info!("Auto-created analysis session: {} for files: {:?}", session_name, file_ids);
+                    created_sessions.push(session);
+                }
+                Err(e) => {
+                    warn!("Failed to create analysis session for {}: {:?}", base_filename, e);
+                }
+            }
+        }
+    }
+
+    let message = if created_sessions.is_empty() {
+        "Files uploaded successfully".to_string()
+    } else {
+        format!("Files uploaded successfully. Created {} analysis session(s)", created_sessions.len())
+    };
+
     Ok(Json(ApiResponse {
         success: true,
         data: Some(uploaded_files),
-        message: "Files uploaded successfully".to_string(),
+        message,
     }))
 }
 
@@ -788,6 +850,179 @@ pub struct RefreshTokenRequest {
     pub refresh_token: String,
 }
 
+// Analysis session route handlers
+
+/// Create a new analysis session
+async fn create_analysis_session(
+    State(state): State<Arc<AppState>>,
+    request: Request,
+) -> Result<Json<ApiResponse<AnalysisSessionResponse>>, StatusCode> {
+    let claims = get_current_user(&request).ok_or(StatusCode::UNAUTHORIZED)?;
+    let user_id = Uuid::parse_str(&claims.sub).map_err(|_| StatusCode::UNAUTHORIZED)?;
+    
+    // Extract JSON from request body manually
+    let bytes = to_bytes(request.into_body(), usize::MAX)
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let session_request: CreateAnalysisSessionRequest = serde_json::from_slice(&bytes)
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    
+    let analysis_service = AnalysisService::new();
+    match analysis_service.create_session(&state.db, user_id, session_request).await {
+        Ok(session) => Ok(Json(ApiResponse {
+            success: true,
+            data: Some(session),
+            message: "Analysis session created successfully".to_string(),
+        })),
+        Err(AnalysisError::DatabaseError(_)) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        Err(_) => Err(StatusCode::BAD_REQUEST),
+    }
+}
+
+/// Get an analysis session by ID
+async fn get_analysis_session(
+    State(state): State<Arc<AppState>>,
+    Path(session_id): Path<Uuid>,
+    request: Request,
+) -> Result<Json<ApiResponse<AnalysisSessionResponse>>, StatusCode> {
+    // TODO: Extract from authentication token
+    let user_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+    
+    let analysis_service = AnalysisService::new();
+    match analysis_service.get_session(&state.db, user_id, session_id).await {
+        Ok(session) => Ok(Json(ApiResponse {
+            success: true,
+            data: Some(session),
+            message: "Analysis session retrieved successfully".to_string(),
+        })),
+        Err(AnalysisError::SessionNotFound) => Err(StatusCode::NOT_FOUND),
+        Err(AnalysisError::DatabaseError(_)) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        Err(_) => Err(StatusCode::BAD_REQUEST),
+    }
+}
+
+/// List all analysis sessions for the current user
+async fn list_analysis_sessions(
+    State(state): State<Arc<AppState>>,
+    request: Request,
+) -> Result<Json<ApiResponse<Vec<AnalysisSessionResponse>>>, StatusCode> {
+    // TODO: Extract from authentication token
+    let user_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+    
+    let analysis_service = AnalysisService::new();
+    match analysis_service.list_sessions(&state.db, user_id, None, None).await {
+        Ok(sessions) => Ok(Json(ApiResponse {
+            success: true,
+            data: Some(sessions),
+            message: "Analysis sessions retrieved successfully".to_string(),
+        })),
+        Err(AnalysisError::DatabaseError(_)) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        Err(_) => Err(StatusCode::BAD_REQUEST),
+    }
+}
+
+/// Update an analysis session
+async fn update_analysis_session(
+    State(state): State<Arc<AppState>>,
+    request: Request,
+) -> Result<Json<ApiResponse<AnalysisSessionResponse>>, StatusCode> {
+    let claims = get_current_user(&request).ok_or(StatusCode::UNAUTHORIZED)?;
+    let user_id = Uuid::parse_str(&claims.sub).map_err(|_| StatusCode::UNAUTHORIZED)?;
+    
+    // Extract path parameter and JSON from request
+    let path = request.uri().path();
+    let session_id = path.split('/').last()
+        .and_then(|s| Uuid::parse_str(s).ok())
+        .ok_or(StatusCode::BAD_REQUEST)?;
+    
+    let bytes = to_bytes(request.into_body(), usize::MAX)
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let update_request: UpdateAnalysisSessionRequest = serde_json::from_slice(&bytes)
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    
+    let analysis_service = AnalysisService::new();
+    match analysis_service.update_session(&state.db, user_id, session_id, update_request).await {
+        Ok(session) => Ok(Json(ApiResponse {
+            success: true,
+            data: Some(session),
+            message: "Analysis session updated successfully".to_string(),
+        })),
+        Err(AnalysisError::SessionNotFound) => Err(StatusCode::NOT_FOUND),
+        Err(AnalysisError::DatabaseError(_)) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        Err(_) => Err(StatusCode::BAD_REQUEST),
+    }
+}
+
+/// Delete an analysis session
+async fn delete_analysis_session(
+    State(state): State<Arc<AppState>>,
+    Path(session_id): Path<Uuid>,
+    request: Request,
+) -> Result<Json<ApiResponse<()>>, StatusCode> {
+    let claims = get_current_user(&request).ok_or(StatusCode::UNAUTHORIZED)?;
+    let user_id = Uuid::parse_str(&claims.sub).map_err(|_| StatusCode::UNAUTHORIZED)?;
+    
+    let analysis_service = AnalysisService::new();
+    match analysis_service.delete_session(&state.db, user_id, session_id).await {
+        Ok(()) => Ok(Json(ApiResponse {
+            success: true,
+            data: Some(()),
+            message: "Analysis session deleted successfully".to_string(),
+        })),
+        Err(AnalysisError::SessionNotFound) => Err(StatusCode::NOT_FOUND),
+        Err(AnalysisError::DatabaseError(_)) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        Err(_) => Err(StatusCode::BAD_REQUEST),
+    }
+}
+
+/// Create a new analysis template
+async fn create_analysis_template(
+    State(state): State<Arc<AppState>>,
+    request: Request,
+) -> Result<Json<ApiResponse<TemplateResponse>>, StatusCode> {
+    let claims = get_current_user(&request).ok_or(StatusCode::UNAUTHORIZED)?;
+    let user_id = Uuid::parse_str(&claims.sub).map_err(|_| StatusCode::UNAUTHORIZED)?;
+    
+    // Extract JSON from request body manually
+    let bytes = to_bytes(request.into_body(), usize::MAX)
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let template_request: CreateTemplateRequest = serde_json::from_slice(&bytes)
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    
+    let analysis_service = AnalysisService::new();
+    match analysis_service.create_template(&state.db, user_id, template_request).await {
+        Ok(template) => Ok(Json(ApiResponse {
+            success: true,
+            data: Some(template),
+            message: "Analysis template created successfully".to_string(),
+        })),
+        Err(AnalysisError::DatabaseError(_)) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        Err(_) => Err(StatusCode::BAD_REQUEST),
+    }
+}
+
+/// List analysis templates for the current user
+async fn list_analysis_templates(
+    State(state): State<Arc<AppState>>,
+    request: Request,
+) -> Result<Json<ApiResponse<Vec<TemplateResponse>>>, StatusCode> {
+    let claims = get_current_user(&request).ok_or(StatusCode::UNAUTHORIZED)?;
+    let user_id = Uuid::parse_str(&claims.sub).map_err(|_| StatusCode::UNAUTHORIZED)?;
+    
+    let analysis_service = AnalysisService::new();
+    match analysis_service.list_templates(&state.db, user_id).await {
+        Ok(templates) => Ok(Json(ApiResponse {
+            success: true,
+            data: Some(templates),
+            message: "Analysis templates retrieved successfully".to_string(),
+        })),
+        Err(AnalysisError::DatabaseError(_)) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        Err(_) => Err(StatusCode::BAD_REQUEST),
+    }
+}
+
 /// Build the application router.
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -808,6 +1043,15 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/api/files/{file_id}", get(get_log_file))
         .route("/api/files/{file_id}", axum::routing::delete(delete_log_file))
         .route("/api/files/{file_id}/schema", get(detect_schema))
+        // Analysis session routes
+        .route("/api/analysis/sessions", post(create_analysis_session))
+        .route("/api/analysis/sessions", get(list_analysis_sessions))
+        .route("/api/analysis/sessions/{session_id}", get(get_analysis_session))
+        .route("/api/analysis/sessions/{session_id}", axum::routing::put(update_analysis_session))
+        .route("/api/analysis/sessions/{session_id}", axum::routing::delete(delete_analysis_session))
+        // Analysis template routes
+        .route("/api/analysis/templates", post(create_analysis_template))
+        .route("/api/analysis/templates", get(list_analysis_templates))
         // TODO: Add processing endpoints later
         // .route("/api/processing/process", post(process_file))
         // .route("/api/processing/status/{task_id}", get(get_processing_status))

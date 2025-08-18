@@ -13,6 +13,8 @@ import {
 import { LogOut, User, BarChart3 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useRouter } from 'next/navigation'
+import SessionManager from '@/components/sessions/SessionManager'
+import FileUpload from '@/components/FileUpload'
 
 export default function DashboardPage() {
   const { user, logout, isAuthenticated } = useAuth()
@@ -64,6 +66,12 @@ export default function DashboardPage() {
 
       <main className="container mx-auto px-4 py-8">
         <div className="grid gap-6">
+          {/* File Upload */}
+          <FileUpload />
+          
+          {/* Session Manager */}
+          <SessionManager />
+          
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center">
@@ -114,13 +122,13 @@ export default function DashboardPage() {
             <CardHeader>
               <CardTitle>Welcome to PPZ Logalyzer</CardTitle>
               <CardDescription>
-                Your log analysis dashboard is ready
+                Your log analysis dashboard with session management
               </CardDescription>
             </CardHeader>
             <CardContent>
               <p className="text-muted-foreground">
-                This is your main dashboard. More features will be added here as we implement
-                log file parsing, data visualization, and analysis tools.
+                Use the session management system above to create, save, and load your analysis sessions. 
+                This allows you to persist your work and easily switch between different analysis configurations.
               </p>
             </CardContent>
           </Card>
