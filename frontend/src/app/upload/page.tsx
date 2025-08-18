@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { CheckCircle, AlertCircle, Clock, X } from "lucide-react"
 import { mockLogs, ProcessedLog, formatFileSize } from "@/lib/mock-data"
+import Navigation from "@/components/Navigation"
 
 interface UploadingFile {
   id: string
@@ -142,20 +143,24 @@ export default function UploadPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Upload Log Files</h1>
-        <p className="text-muted-foreground">
-          Upload your PaparazziUAV log files for analysis and visualization
-        </p>
-      </div>
+    <div className="min-h-screen bg-background">
+      <Navigation />
+      
+      <main className="container mx-auto px-4 py-8">
+        <div className="space-y-6">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">Upload Log Files</h1>
+            <p className="text-muted-foreground">
+              Upload your PaparazziUAV log files for analysis and visualization
+            </p>
+          </div>
 
-      <FileUpload
-        onFilesUploaded={handleFilesUploaded}
-        accept=".log,.csv,.txt,.xml"
-        maxFileSize={500} // 500MB for large log files
-        maxFiles={20}
-      />
+          <FileUpload
+            onFilesUploaded={handleFilesUploaded}
+            accept=".log,.csv,.txt,.xml"
+            maxFileSize={500} // 500MB for large log files
+            maxFiles={20}
+          />
 
       {uploadingFiles.length > 0 && (
         <Card>
@@ -236,6 +241,8 @@ export default function UploadPage() {
           </CardContent>
         </Card>
       )}
+        </div>
+      </main>
     </div>
   )
 }

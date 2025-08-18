@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -38,6 +39,7 @@ import { toast } from 'sonner'
 import { formatDistanceToNow } from 'date-fns'
 
 export default function SessionManager() {
+  const router = useRouter()
   const { token } = useAuth()
   const {
     sessions,
@@ -113,8 +115,8 @@ export default function SessionManager() {
   }
 
   const handleLoadSession = (session: AnalysisSession) => {
-    setCurrentSession(session)
-    toast.success(`Loaded session: ${session.session_name || 'Untitled Session'}`)
+    router.push(`/dashboard?session_id=${session.id}`)
+    toast.success(`Loading session: ${session.session_name || 'Untitled Session'}`)
   }
 
   if (!token) {

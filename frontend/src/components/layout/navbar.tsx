@@ -26,10 +26,9 @@ import {
 interface NavbarProps {
   className?: string
   onMenuToggle?: () => void
-  sidebarOpen?: boolean
 }
 
-export function Navbar({ className, onMenuToggle, sidebarOpen }: NavbarProps) {
+export function Navbar({ className, onMenuToggle }: NavbarProps) {
   const { setTheme, theme } = useTheme()
   const [mounted, setMounted] = React.useState(false)
 

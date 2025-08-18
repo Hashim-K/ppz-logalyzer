@@ -18,7 +18,6 @@ export function MainLayout({ children, className }: MainLayoutProps) {
       {/* Top Navigation */}
       <Navbar 
         onMenuToggle={() => setSidebarOpen(!sidebarOpen)}
-        sidebarOpen={sidebarOpen}
       />
       
       {/* Main Content Area */}

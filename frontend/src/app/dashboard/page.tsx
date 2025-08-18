@@ -1,24 +1,27 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useState, Suspense } from 'react'
+import { useSearchParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth'
-import { Button } from '@/components/ui/button'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
-import { LogOut, User, BarChart3 } from 'lucide-react'
-import { toast } from 'sonner'
-import { useRouter } from 'next/navigation'
-import SessionManager from '@/components/sessions/SessionManager'
-import FileUpload from '@/components/FileUpload'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import Navigation from '@/components/Navigation'
+import SessionSelector from '@/components/ui/SessionSelector'
+import EmptyAnalysisState from '@/components/dashboard/EmptyAnalysisState'
+import AnalysisLoadingState from '@/components/dashboard/AnalysisLoadingState'
+import AnalysisDisplay from '@/components/dashboard/AnalysisDisplay'
+import { AnalysisSession } from '@/lib/sessions'
+import { BarChart3 } from 'lucide-react'
 
-export default function DashboardPage() {
-  const { user, logout, isAuthenticated } = useAuth()
+function DashboardContent() {
+  const { isAuthenticated } = useAuth()
   const router = useRouter()
+  const searchParams = useSearchParams()
+  
+  const [selectedSession, setSelectedSession] = useState<AnalysisSession | null>(null)
+  const [isLoadingSessionData, setIsLoadingSessionData] = useState(false)
+  
+  // Get session_id from URL if present (for backward compatibility)
+  const urlSessionId = searchParams?.get('session_id')
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -27,113 +30,85 @@ export default function DashboardPage() {
     }
   }, [isAuthenticated, router])
 
+  // Handle session selection
+  const handleSessionSelect = async (session: AnalysisSession | null) => {
+    setSelectedSession(session)
+    
+    if (session) {
+      // Update URL to reflect selected session
+      const url = new URL(window.location.href)
+      url.searchParams.set('session_id', session.id)
+      router.push(url.pathname + url.search)
+      
+      // Simulate loading session data
+      setIsLoadingSessionData(true)
+      // TODO: Replace with actual API call to load session data
+      setTimeout(() => {
+        setIsLoadingSessionData(false)
+      }, 1000)
+    } else {
+      // Remove session_id from URL
+      const url = new URL(window.location.href)
+      url.searchParams.delete('session_id')
+      router.push(url.pathname + url.search)
+    }
+  }
+
   // Show loading or return null while redirecting
   if (!isAuthenticated) {
     return null
   }
 
-  const handleLogout = () => {
-    logout()
-    toast.success('Logged out successfully', {
-      description: 'See you next time!',
-    })
-    router.push('/')
-  }
-
   return (
     <div className="min-h-screen bg-background">
-      <header className="border-b">
-        <div className="flex h-16 items-center px-4 justify-between">
-          <div className="flex items-center space-x-2">
-            <BarChart3 className="h-8 w-8 text-primary" />
-            <h1 className="text-2xl font-bold">PPZ Logalyzer</h1>
-          </div>
-          <div className="flex items-center space-x-4">
-            <span className="text-sm text-muted-foreground">
-              Welcome, {user?.username}
-            </span>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleLogout}
-            >
-              <LogOut className="h-4 w-4 mr-2" />
-              Logout
-            </Button>
-          </div>
-        </div>
-      </header>
+      <Navigation />
 
       <main className="container mx-auto px-4 py-8">
-        <div className="grid gap-6">
-          {/* File Upload */}
-          <FileUpload />
-          
-          {/* Session Manager */}
-          <SessionManager />
-          
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center">
-                <User className="h-5 w-5 mr-2" />
-                User Profile
-              </CardTitle>
-              <CardDescription>
-                Your account information
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              <div>
-                <label className="text-sm font-medium text-muted-foreground">
-                  Username
-                </label>
-                <p className="text-sm">{user?.username}</p>
-              </div>
-              <div>
-                <label className="text-sm font-medium text-muted-foreground">
-                  Email
-                </label>
-                <p className="text-sm">{user?.email}</p>
-              </div>
-              <div>
-                <label className="text-sm font-medium text-muted-foreground">
-                  Role
-                </label>
-                <p className="text-sm capitalize">{user?.is_admin ? 'Admin' : 'User'}</p>
-              </div>
-              <div>
-                <label className="text-sm font-medium text-muted-foreground">
-                  Status
-                </label>
-                <p className="text-sm capitalize">{user?.is_active ? 'Active' : 'Inactive'}</p>
-              </div>
-              <div>
-                <label className="text-sm font-medium text-muted-foreground">
-                  Member Since
-                </label>
-                <p className="text-sm">
-                  {user?.created_at ? new Date(user.created_at).toLocaleDateString() : 'N/A'}
-                </p>
-              </div>
-            </CardContent>
-          </Card>
+        <div className="space-y-6">
+          {/* Page Header */}
+          <div className="flex items-center space-x-3">
+            <BarChart3 className="h-8 w-8 text-primary" />
+            <div>
+              <h1 className="text-3xl font-bold">Analysis</h1>
+              <p className="text-muted-foreground">Analyze your Paparazzi UAV log data</p>
+            </div>
+          </div>
 
+          {/* Session Selector */}
           <Card>
             <CardHeader>
-              <CardTitle>Welcome to PPZ Logalyzer</CardTitle>
+              <CardTitle>Session Analysis</CardTitle>
               <CardDescription>
-                Your log analysis dashboard with session management
+                Select a session to view detailed analysis, aircraft information, and message timeline
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <p className="text-muted-foreground">
-                Use the session management system above to create, save, and load your analysis sessions. 
-                This allows you to persist your work and easily switch between different analysis configurations.
-              </p>
+              <SessionSelector
+                onSessionSelect={handleSessionSelect}
+                selectedSessionId={urlSessionId || undefined}
+                className="w-full max-w-md"
+              />
             </CardContent>
           </Card>
+
+          {/* Content Area */}
+          {isLoadingSessionData ? (
+            <AnalysisLoadingState />
+          ) : selectedSession ? (
+            <AnalysisDisplay session={selectedSession} />
+          ) : (
+            <EmptyAnalysisState />
+          )}
         </div>
       </main>
     </div>
+  )
+}
+
+export default function DashboardPage() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <DashboardContent />
+    </Suspense>
   )
 }
