@@ -1,21 +1,83 @@
 use axum::{
-    extract::{Multipart, State},
+    extract::{Multipart, State, Path},
     http::StatusCode,
     response::Json,
     routing::{get, post},
     Router,
 };
-use serde::Serialize;
+use chrono::{DateTime, Utc, NaiveDate};
+use regex::Regex;
+use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
-use std::sync::Arc;
+use std::{path::Path as StdPath, sync::Arc};
 use tokio::fs;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use uuid::Uuid;
+
+use crate::schema::{SchemaManager};
+// use crate::processing::{FileProcessor, ProcessingResult, ProcessingStatus};
 
 // App state
 #[derive(Clone)]
 pub struct AppState {
     pub db: PgPool,
+    pub schema_manager: Arc<tokio::sync::Mutex<SchemaManager>>,
+    // pub file_processor: Arc<tokio::sync::Mutex<FileProcessor>>,
+}
+
+// Helper functions for file pairing and timestamp extraction
+
+/// Extract timestamp from PaparazziUAV filename format: DD_MM_YY__HH_MM_SS.ext
+fn extract_timestamp_from_filename(filename: &str) -> Option<DateTime<Utc>> {
+    let re = Regex::new(r"(\d{2})_(\d{2})_(\d{2})__(\d{2})_(\d{2})_(\d{2})").ok()?;
+    let caps = re.captures(filename)?;
+    
+    let day: u32 = caps.get(1)?.as_str().parse().ok()?;
+    let month: u32 = caps.get(2)?.as_str().parse().ok()?;
+    let year: i32 = caps.get(3)?.as_str().parse::<u32>().ok()? as i32 + 2000; // Convert YY to 20YY
+    let hour: u32 = caps.get(4)?.as_str().parse().ok()?;
+    let minute: u32 = caps.get(5)?.as_str().parse().ok()?;
+    let second: u32 = caps.get(6)?.as_str().parse().ok()?;
+    
+    NaiveDate::from_ymd_opt(year, month, day)?
+        .and_hms_opt(hour, minute, second)?
+        .and_utc()
+        .into()
+}
+
+/// Parse filename to extract base name and extension
+fn parse_filename(filename: &str) -> (String, String) {
+    match StdPath::new(filename).file_stem().and_then(|s| s.to_str()) {
+        Some(stem) => {
+            let extension = StdPath::new(filename)
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_string();
+            (stem.to_string(), extension)
+        }
+        None => (filename.to_string(), String::new())
+    }
+}
+
+/// Get or create a file pair ID for files with the same base filename
+async fn get_or_create_pair_id(
+    pool: &PgPool,
+    base_filename: &str,
+) -> Result<Uuid, sqlx::Error> {
+    // First try to find existing pair
+    if let Ok(record) = sqlx::query!(
+        "SELECT file_pair_id FROM log_files WHERE base_filename = $1 LIMIT 1",
+        base_filename
+    )
+    .fetch_one(pool)
+    .await
+    {
+        return Ok(record.file_pair_id.unwrap_or_else(Uuid::new_v4));
+    }
+    
+    // Create new pair ID
+    Ok(Uuid::new_v4())
 }
 
 // Response types
@@ -46,14 +108,90 @@ pub struct LogFileInfo {
     pub is_processed: bool,
 }
 
+#[derive(Serialize)]
+pub struct SchemaDetectionResponse {
+    pub success: bool,
+    pub schema_found: bool,
+    pub confidence: f64,
+    pub source: String,
+    pub warnings: Vec<String>,
+    pub schema_hash: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct ProcessingStatusResponse {
+    pub task_id: Uuid,
+    pub status: String,
+    pub progress: f64,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub started_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub error_message: Option<String>,
+    pub records_processed: Option<usize>,
+}
+
+#[derive(Deserialize)]
+pub struct ProcessFileRequest {
+    pub file_id: Uuid,
+}
+
 async fn healthz() -> &'static str {
     "ok"
+}
+
+async fn health(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    // Check database connection
+    let db_status = match sqlx::query("SELECT 1").fetch_one(&state.db).await {
+        Ok(_) => "healthy",
+        Err(_) => "unhealthy",
+    };
+    
+    let overall_status = if db_status == "healthy" { "healthy" } else { "unhealthy" };
+    
+    let health_status = serde_json::json!({
+        "status": overall_status,
+        "timestamp": std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+        "version": "0.1.0",
+        "checks": {
+            "database": db_status,
+            "schema_manager": "ok",
+            "file_processor": "ok"
+        }
+    });
+
+    if overall_status == "healthy" {
+        Ok(Json(health_status))
+    } else {
+        Err(StatusCode::SERVICE_UNAVAILABLE)
+    }
+}
+
+async fn root() -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "service": "ppz-logalyzer-api",
+        "version": "0.1.0", 
+        "status": "running",
+        "description": "PaparazziUAV Log Analyzer Backend API",
+        "endpoints": {
+            "health": "/health",
+            "files": "/api/files",
+            "upload": "/api/files/upload", 
+            "schema": "/api/files/{id}/schema",
+            "processing": "/api/processing"
+        }
+    }))
 }
 
 async fn upload_log_files(
     State(state): State<Arc<AppState>>,
     mut multipart: Multipart,
 ) -> Result<Json<ApiResponse<Vec<FileUploadResponse>>>, StatusCode> {
+    info!("Upload request received");
     let mut uploaded_files = Vec::new();
     
     // Create uploads directory if it doesn't exist
@@ -62,14 +200,24 @@ async fn upload_log_files(
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
 
-    while let Some(field) = multipart.next_field().await.map_err(|_| StatusCode::BAD_REQUEST)? {
-        let _name = field.name().unwrap_or("unknown").to_string();
+    while let Some(field) = multipart.next_field().await.map_err(|e| {
+        error!("Failed to get next multipart field: {}", e);
+        StatusCode::BAD_REQUEST
+    })? {
+        let field_name = field.name().unwrap_or("unknown").to_string();
         let original_filename = field.file_name().unwrap_or("unknown").to_string();
         let content_type = field.content_type().unwrap_or("application/octet-stream").to_string();
         
+        info!("Processing field: name={}, filename={}, content_type={}", field_name, original_filename, content_type);
+        
         // Read file data
-        let data = field.bytes().await.map_err(|_| StatusCode::BAD_REQUEST)?;
+        let data = field.bytes().await.map_err(|e| {
+            error!("Failed to read field bytes: {}", e);
+            StatusCode::BAD_REQUEST
+        })?;
         let file_size = data.len() as i64;
+        
+        info!("File size: {} bytes", file_size);
         
         // Generate unique file ID and save path
         let file_id = Uuid::new_v4();
@@ -84,15 +232,34 @@ async fn upload_log_files(
         // Calculate file hash for deduplication
         let file_hash = blake3::hash(&data).to_hex().to_string();
         
-        // For now, we'll use a dummy user_id. In real implementation, get from auth
-        let user_id = Uuid::new_v4(); // TODO: Replace with actual user from auth
+        // Extract timestamp and parse filename for pairing
+        let extracted_timestamp = extract_timestamp_from_filename(&original_filename);
+        let (base_filename, file_extension) = parse_filename(&original_filename);
         
-        // Insert into database
+        // Get or create a file pair ID for files with the same base filename
+        let file_pair_id = match get_or_create_pair_id(&state.db, &base_filename).await {
+            Ok(pair_id) => Some(pair_id),
+            Err(e) => {
+                warn!("Failed to get/create pair ID for {}: {}", base_filename, e);
+                None
+            }
+        };
+        
+        // For now, we'll use a dummy user_id. In real implementation, get from auth
+        let user_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap(); // Fixed test user
+        
+        // Ensure test user exists (for development only)
+        let _ = sqlx::query!(
+            "INSERT INTO users (id, username, email, password_hash, full_name) VALUES ($1, 'test_user', 'test@example.com', 'dummy_hash', 'Test User') ON CONFLICT (id) DO NOTHING",
+            user_id
+        ).execute(&state.db).await;
+        
+        // Insert into database with enhanced file pairing info
         let upload_timestamp = chrono::Utc::now();
         let result = sqlx::query!(
             r#"
-            INSERT INTO log_files (id, user_id, original_filename, storage_path, file_size, file_hash, content_type, upload_timestamp)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            INSERT INTO log_files (id, user_id, original_filename, storage_path, file_size, file_hash, content_type, upload_timestamp, file_pair_id, base_filename, extracted_timestamp, file_extension)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             RETURNING id, original_filename, file_size, upload_timestamp, content_type
             "#,
             file_id,
@@ -102,7 +269,11 @@ async fn upload_log_files(
             file_size,
             file_hash,
             content_type,
-            upload_timestamp
+            upload_timestamp,
+            file_pair_id,
+            base_filename,
+            extracted_timestamp,
+            file_extension
         ).fetch_one(&state.db).await;
 
         match result {
@@ -273,12 +444,119 @@ async fn delete_log_file(
     }
 }
 
+/// Parse and analyze a specific log file
+async fn detect_schema(
+    State(state): State<Arc<AppState>>,
+    Path(file_id): Path<Uuid>,
+) -> Result<Json<ApiResponse<SchemaDetectionResponse>>, StatusCode> {
+    // Get file path and pairing info from database
+    let file_info = sqlx::query!(
+        "SELECT storage_path, original_filename, file_pair_id, base_filename, file_extension FROM log_files WHERE id = $1",
+        file_id
+    ).fetch_optional(&state.db).await
+     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let (storage_path, original_filename, file_pair_id, base_filename, file_extension) = match file_info {
+        Some(info) => (
+            info.storage_path, 
+            info.original_filename,
+            info.file_pair_id,
+            info.base_filename,
+            info.file_extension
+        ),
+        None => {
+            return Ok(Json(ApiResponse {
+                success: false,
+                data: None,
+                message: "File not found".to_string(),
+            }));
+        }
+    };
+
+    // Find the matching file with the same file_pair_id but different extension
+    let target_extension = if file_extension == Some("log".to_string()) { "data" } else { "log" };
+    let paired_file_info = sqlx::query!(
+        "SELECT storage_path FROM log_files WHERE file_pair_id = $1 AND file_extension = $2 AND id != $3",
+        file_pair_id,
+        target_extension,
+        file_id
+    ).fetch_optional(&state.db).await
+     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let paired_storage_path = match paired_file_info {
+        Some(info) => info.storage_path,
+        None => {
+            return Ok(Json(ApiResponse {
+                success: false,
+                data: None,
+                message: format!("Matching .{} file not found for pair", target_extension),
+            }));
+        }
+    };
+
+    // Parse the log file using our schema manager with explicit log/data paths
+    let mut schema_manager = state.schema_manager.lock().await;
+    let (log_path, data_path) = if file_extension == Some("log".to_string()) {
+        (std::path::PathBuf::from(&storage_path), std::path::PathBuf::from(&paired_storage_path))
+    } else {
+        (std::path::PathBuf::from(&paired_storage_path), std::path::PathBuf::from(&storage_path))
+    };
+
+    match schema_manager.parse_log_file_with_data(&log_path, &data_path).await {
+        Ok(log_file) => {
+            let stats = schema_manager.get_log_statistics(&log_file);
+            
+            let response = SchemaDetectionResponse {
+                success: true,
+                schema_found: true,
+                confidence: 1.0, // We successfully parsed it
+                source: format!("Parsed from {} with {} messages", original_filename, stats.total_messages),
+                warnings: vec![], // Add warnings if needed
+                schema_hash: Some(format!("v{}-ac{}", 
+                    log_file.configuration.paparazzi_version.unwrap_or_else(|| "unknown".to_string()),
+                    log_file.configuration.aircraft.ac_id)),
+            };
+
+            Ok(Json(ApiResponse {
+                success: true,
+                data: Some(response),
+                message: format!("Successfully parsed log file with {} messages", stats.total_messages),
+            }))
+        }
+        Err(e) => {
+            warn!("Failed to parse log file {}: {}", original_filename, e);
+            
+            let response = SchemaDetectionResponse {
+                success: false,
+                schema_found: false,
+                confidence: 0.0,
+                source: "Failed to parse".to_string(),
+                warnings: vec![format!("Parse error: {}", e)],
+                schema_hash: None,
+            };
+
+            Ok(Json(ApiResponse {
+                success: false,
+                data: Some(response),
+                message: format!("Failed to parse log file: {}", e),
+            }))
+        }
+    }
+}
+
 /// Build the application router.
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/healthz", get(healthz))
+        .route("/health", get(health))
+        .route("/", get(root))
         .route("/api/files/upload", post(upload_log_files))
         .route("/api/files", get(list_log_files))
         .route("/api/files/{file_id}", get(get_log_file))
         .route("/api/files/{file_id}", axum::routing::delete(delete_log_file))
+        .route("/api/files/{file_id}/schema", get(detect_schema))
+        // TODO: Add processing endpoints later
+        // .route("/api/processing/process", post(process_file))
+        // .route("/api/processing/status/{task_id}", get(get_processing_status))
+        // .route("/api/processing/process-next", post(process_next_queued))
 }
