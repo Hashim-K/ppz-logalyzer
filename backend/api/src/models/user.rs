@@ -9,7 +9,6 @@ pub struct User {
     pub username: String,
     pub email: String,
     pub password_hash: String,
-    pub full_name: Option<String>,
     pub is_active: bool,
     pub is_admin: bool,
     pub created_at: DateTime<Utc>,
@@ -24,14 +23,12 @@ pub struct CreateUserRequest {
     pub username: String,
     pub email: String,
     pub password: String,
-    pub full_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateUserRequest {
     pub username: Option<String>,
     pub email: Option<String>,
-    pub full_name: Option<String>,
     pub is_active: Option<bool>,
     pub is_admin: Option<bool>,
 }
@@ -47,14 +44,12 @@ pub struct UserResponse {
     pub id: Uuid,
     pub username: String,
     pub email: String,
-    pub full_name: Option<String>,
     pub is_active: bool,
     pub is_admin: bool,
     pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
     pub last_login_at: Option<DateTime<Utc>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+}#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct UserPreference {
     pub id: Uuid,
     pub user_id: Uuid,
@@ -76,10 +71,10 @@ impl From<User> for UserResponse {
             id: user.id,
             username: user.username,
             email: user.email,
-            full_name: user.full_name,
             is_active: user.is_active,
             is_admin: user.is_admin,
             created_at: user.created_at,
+            updated_at: user.updated_at,
             last_login_at: user.last_login_at,
         }
     }

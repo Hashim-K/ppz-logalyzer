@@ -48,6 +48,10 @@ pub enum AuthError {
     UserNotFound,
     #[error("User not active")]
     UserNotActive,
+    #[error("Username already exists")]
+    UsernameExists,
+    #[error("Email already exists")]
+    EmailExists,
 }
 
 impl AuthService {

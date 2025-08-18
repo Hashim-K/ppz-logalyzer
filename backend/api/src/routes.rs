@@ -253,7 +253,7 @@ async fn upload_log_files(
         
         // Ensure test user exists (for development only)
         let _ = sqlx::query!(
-            "INSERT INTO users (id, username, email, password_hash, full_name) VALUES ($1, 'test_user', 'test@example.com', 'dummy_hash', 'Test User') ON CONFLICT (id) DO NOTHING",
+            "INSERT INTO users (id, username, email, password_hash) VALUES ($1, 'test_user', 'test@example.com', 'dummy_hash') ON CONFLICT (id) DO NOTHING",
             user_id
         ).execute(&state.db).await;
         
@@ -552,18 +552,69 @@ async fn detect_schema(
 /// Register a new user
 async fn register(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(request): Json<CreateUserRequest>,
-) -> Result<Json<ApiResponse<UserResponse>>, StatusCode> {
+) -> Result<Json<ApiResponse<LoginResponse>>, (StatusCode, Json<ApiResponse<()>>)> {
+    info!("Registration request received: {:?}", request);
+    
     let user_service = UserService::new();
+    let ip_address = Some(IpNetwork::from(addr.ip()));
+    let user_agent = None; // TODO: Extract from headers
     
     match user_service.create_user(&state.db, request).await {
-        Ok(user) => Ok(Json(ApiResponse {
-            success: true,
-            data: Some(user),
-            message: "User created successfully".to_string(),
-        })),
-        Err(AuthError::InvalidCredentials) => Err(StatusCode::CONFLICT), // Username/email already exists
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        Ok(user) => {
+            // Create a session for the newly registered user
+            match user_service.create_session(&state.db, user.id, ip_address, user_agent).await {
+                Ok(session) => Ok(Json(ApiResponse {
+                    success: true,
+                    data: Some(LoginResponse { user, session }),
+                    message: "User created successfully".to_string(),
+                })),
+                Err(_) => Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse {
+                        success: false,
+                        data: None,
+                        message: "User created but session creation failed".to_string(),
+                    })
+                ))
+            }
+        },
+        Err(AuthError::UsernameExists) => Err((
+            StatusCode::CONFLICT,
+            Json(ApiResponse {
+                success: false,
+                data: None,
+                message: "Username already exists".to_string(),
+            })
+        )),
+        Err(AuthError::EmailExists) => Err((
+            StatusCode::CONFLICT,
+            Json(ApiResponse {
+                success: false,
+                data: None,
+                message: "Email already exists".to_string(),
+            })
+        )),
+        Err(AuthError::InvalidCredentials) => Err((
+            StatusCode::CONFLICT,
+            Json(ApiResponse {
+                success: false,
+                data: None,
+                message: "Username or email already exists".to_string(),
+            })
+        )),
+        Err(e) => {
+            error!("Registration error: {:?}", e);
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiResponse {
+                    success: false,
+                    data: None,
+                    message: "Internal server error".to_string(),
+                })
+            ))
+        },
     }
 }
 
@@ -572,7 +623,7 @@ async fn login(
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(request): Json<LoginRequest>,
-) -> Result<Json<ApiResponse<LoginResponse>>, StatusCode> {
+) -> Result<Json<ApiResponse<LoginResponse>>, (StatusCode, Json<ApiResponse<()>>)> {
     let user_service = UserService::new();
     let ip_address = Some(IpNetwork::from(addr.ip()));
     let user_agent = None; // TODO: Extract from headers
@@ -583,10 +634,38 @@ async fn login(
             data: Some(LoginResponse { user, session }),
             message: "Login successful".to_string(),
         })),
-        Err(AuthError::InvalidCredentials) => Err(StatusCode::UNAUTHORIZED),
-        Err(AuthError::AccountLocked) => Err(StatusCode::LOCKED),
-        Err(AuthError::UserNotActive) => Err(StatusCode::FORBIDDEN),
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        Err(AuthError::InvalidCredentials) => Err((
+            StatusCode::UNAUTHORIZED,
+            Json(ApiResponse {
+                success: false,
+                data: None,
+                message: "Invalid credentials".to_string(),
+            })
+        )),
+        Err(AuthError::AccountLocked) => Err((
+            StatusCode::LOCKED,
+            Json(ApiResponse {
+                success: false,
+                data: None,
+                message: "Account is locked".to_string(),
+            })
+        )),
+        Err(AuthError::UserNotActive) => Err((
+            StatusCode::FORBIDDEN,
+            Json(ApiResponse {
+                success: false,
+                data: None,
+                message: "User account is not active".to_string(),
+            })
+        )),
+        Err(_) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiResponse {
+                success: false,
+                data: None,
+                message: "Internal server error".to_string(),
+            })
+        )),
     }
 }
 
@@ -646,6 +725,56 @@ async fn refresh_token(
     }
 }
 
+/// Check if username is available
+async fn check_username_availability(
+    State(state): State<Arc<AppState>>,
+    Path(username): Path<String>,
+) -> Json<ApiResponse<bool>> {
+    let is_available = sqlx::query!(
+        "SELECT id FROM users WHERE username = $1",
+        username
+    )
+    .fetch_optional(&state.db)
+    .await
+    .map(|result| result.is_none())
+    .unwrap_or(false);
+
+    Json(ApiResponse {
+        success: true,
+        data: Some(is_available),
+        message: if is_available {
+            "Username is available".to_string()
+        } else {
+            "Username is already taken".to_string()
+        },
+    })
+}
+
+/// Check if email is available
+async fn check_email_availability(
+    State(state): State<Arc<AppState>>,
+    Path(email): Path<String>,
+) -> Json<ApiResponse<bool>> {
+    let is_available = sqlx::query!(
+        "SELECT id FROM users WHERE email = $1",
+        email
+    )
+    .fetch_optional(&state.db)
+    .await
+    .map(|result| result.is_none())
+    .unwrap_or(false);
+
+    Json(ApiResponse {
+        success: true,
+        data: Some(is_available),
+        message: if is_available {
+            "Email is available".to_string()
+        } else {
+            "Email is already registered".to_string()
+        },
+    })
+}
+
 // Response types for authentication
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -671,6 +800,8 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/api/auth/logout", post(logout))
         .route("/api/auth/profile", get(profile))
         .route("/api/auth/refresh", post(refresh_token))
+        .route("/api/auth/check-username/{username}", get(check_username_availability))
+        .route("/api/auth/check-email/{email}", get(check_email_availability))
         // File management routes
         .route("/api/files/upload", post(upload_log_files))
         .route("/api/files", get(list_log_files))

@@ -1,147 +1,158 @@
+'use client'
+
+import { useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import Link from "next/link"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { Input } from "@/components/ui/input"
-import { Upload, FileText, Eye, Search, Clock, AlertCircle } from "lucide-react"
-import { mockLogs, formatFileSize, formatDuration } from "@/lib/mock-data"
+import { Loader2, LogIn, UserPlus, BarChart3, FileText, Shield } from "lucide-react"
+import { useAuth } from '@/lib/auth'
 
 export default function HomePage() {
-  const completedLogs = mockLogs.filter(log => log.status === "completed")
-  const processingLogs = mockLogs.filter(log => log.status === "processing")
-  const errorLogs = mockLogs.filter(log => log.status === "error")
-  
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Log Files</h1>
-          <p className="text-muted-foreground">
-            Manage and analyze your PaparazziUAV flight logs
-          </p>
+  const { isAuthenticated, isLoading } = useAuth()
+  const router = useRouter()
+
+  useEffect(() => {
+    // Redirect authenticated users to dashboard
+    if (isAuthenticated && !isLoading) {
+      router.push('/dashboard')
+    }
+  }, [isAuthenticated, isLoading, router])
+
+  // Show loading state while checking auth
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="flex flex-col items-center space-y-4">
+          <Loader2 className="h-8 w-8 animate-spin" />
+          <p className="text-muted-foreground">Loading...</p>
         </div>
-        <Link href="/upload">
-          <Button>
-            <Upload className="h-4 w-4 mr-2" />
-            Upload New Log
-          </Button>
-        </Link>
       </div>
+    )
+  }
 
-      {/* Search */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          placeholder="Search log files..."
-          className="pl-10"
-        />
-      </div>
+  // If authenticated, don't render the landing page (will redirect)
+  if (isAuthenticated) {
+    return null
+  }
 
-      {/* Stats */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Logs</CardTitle>
-            <FileText className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{mockLogs.length}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Completed</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-green-600">{completedLogs.length}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Processing</CardTitle>
-            <Clock className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-blue-600">{processingLogs.length}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Errors</CardTitle>
-            <AlertCircle className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-red-600">{errorLogs.length}</div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Recent Logs */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Recent Logs</CardTitle>
-          <CardDescription>Your most recently processed flight logs</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-3">
-            {mockLogs.slice(0, 8).map(log => (
-              <div key={log.id} className="flex items-center justify-between p-3 border rounded-lg">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <h4 className="font-medium truncate">{log.filename}</h4>
-                    <Badge 
-                      variant={
-                        log.status === "completed" ? "default" :
-                        log.status === "error" ? "destructive" : "secondary"
-                      }
-                    >
-                      {log.status}
-                    </Badge>
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    {formatFileSize(log.fileSize)} • {log.uploadDate.toLocaleDateString()}
-                    {log.flightDuration && ` • ${formatDuration(log.flightDuration)}`}
-                  </p>
-                </div>
-                {log.status === "completed" ? (
-                  <Link href={`/dashboard/${log.id}`}>
-                    <Button size="sm" variant="outline">
-                      <Eye className="h-4 w-4 mr-2" />
-                      View
-                    </Button>
-                  </Link>
-                ) : log.status === "error" ? (
-                  <Button size="sm" variant="outline" disabled>
-                    <AlertCircle className="h-4 w-4 mr-2" />
-                    Error
-                  </Button>
-                ) : (
-                  <Button size="sm" variant="outline" disabled>
-                    <Clock className="h-4 w-4 mr-2" />
-                    Processing
-                  </Button>
-                )}
-              </div>
-            ))}
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
+      {/* Header */}
+      <div className="container mx-auto px-4 py-6">
+        <nav className="flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <BarChart3 className="h-8 w-8 text-blue-600" />
+            <h1 className="text-2xl font-bold">PPZ Logalyzer</h1>
           </div>
+          <div className="space-x-2">
+            <Link href="/auth/login">
+              <Button variant="outline" size="sm">
+                <LogIn className="h-4 w-4 mr-2" />
+                Login
+              </Button>
+            </Link>
+            <Link href="/auth/register">
+              <Button size="sm">
+                <UserPlus className="h-4 w-4 mr-2" />
+                Register
+              </Button>
+            </Link>
+          </div>
+        </nav>
+      </div>
+
+      {/* Hero Section */}
+      <div className="container mx-auto px-4 py-16 text-center">
+        <div className="max-w-4xl mx-auto">
+          <h2 className="text-5xl font-bold text-gray-900 dark:text-white mb-6">
+            Analyze UAV Logs with 
+            <span className="text-blue-600 dark:text-blue-400"> Intelligence</span>
+          </h2>
+          <p className="text-xl text-gray-600 dark:text-gray-300 mb-8 leading-relaxed">
+            Advanced telemetry analysis for Paparazzi UAV flights. Upload, process, and visualize 
+            your flight data with powerful analytics and real-time insights.
+          </p>
+          <div className="space-x-4">
+            <Link href="/auth/register">
+              <Button size="lg" className="text-lg px-8 py-3">
+                Get Started Free
+                <UserPlus className="h-5 w-5 ml-2" />
+              </Button>
+            </Link>
+            <Link href="/auth/login">
+              <Button variant="outline" size="lg" className="text-lg px-8 py-3">
+                Sign In
+                <LogIn className="h-5 w-5 ml-2" />
+              </Button>
+            </Link>
+          </div>
+        </div>
+      </div>
+
+      {/* Features Section */}
+      <div className="container mx-auto px-4 py-16">
+        <h3 className="text-3xl font-bold text-center mb-12">Powerful Features</h3>
+        <div className="grid md:grid-cols-3 gap-8">
+          <Card className="border-2 hover:shadow-lg transition-shadow">
+            <CardHeader className="text-center">
+              <FileText className="h-12 w-12 text-blue-600 mx-auto mb-4" />
+              <CardTitle>Log Processing</CardTitle>
+              <CardDescription>
+                Automatically parse and process Paparazzi UAV log files with intelligent 
+                format detection and error handling.
+              </CardDescription>
+            </CardHeader>
+          </Card>
           
-          {mockLogs.length === 0 && (
-            <div className="text-center py-8">
-              <FileText className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
-              <h3 className="text-lg font-medium mb-2">No log files yet</h3>
-              <p className="text-muted-foreground mb-4">
-                Upload your first PaparazziUAV log file to get started
-              </p>
-              <Link href="/upload">
-                <Button>
-                  <Upload className="h-4 w-4 mr-2" />
-                  Upload First Log
-                </Button>
-              </Link>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+          <Card className="border-2 hover:shadow-lg transition-shadow">
+            <CardHeader className="text-center">
+              <BarChart3 className="h-12 w-12 text-green-600 mx-auto mb-4" />
+              <CardTitle>Real-time Analytics</CardTitle>
+              <CardDescription>
+                Visualize flight telemetry data with interactive charts, graphs, and 
+                real-time monitoring capabilities.
+              </CardDescription>
+            </CardHeader>
+          </Card>
+          
+          <Card className="border-2 hover:shadow-lg transition-shadow">
+            <CardHeader className="text-center">
+              <Shield className="h-12 w-12 text-purple-600 mx-auto mb-4" />
+              <CardTitle>Secure & Reliable</CardTitle>
+              <CardDescription>
+                Enterprise-grade security with encrypted data storage, user authentication, 
+                and reliable cloud infrastructure.
+              </CardDescription>
+            </CardHeader>
+          </Card>
+        </div>
+      </div>
+
+      {/* CTA Section */}
+      <div className="bg-blue-600 dark:bg-blue-700">
+        <div className="container mx-auto px-4 py-16 text-center">
+          <h3 className="text-3xl font-bold text-white mb-4">
+            Ready to Start Analyzing?
+          </h3>
+          <p className="text-blue-100 text-lg mb-8 max-w-2xl mx-auto">
+            Join researchers and engineers who trust PPZ Logalyzer for their UAV data analysis needs.
+          </p>
+          <Link href="/auth/register">
+            <Button size="lg" variant="secondary" className="text-lg px-8 py-3">
+              Create Your Account
+              <UserPlus className="h-5 w-5 ml-2" />
+            </Button>
+          </Link>
+        </div>
+      </div>
+
+      {/* Footer */}
+      <footer className="bg-gray-50 dark:bg-slate-900 border-t">
+        <div className="container mx-auto px-4 py-8 text-center text-gray-600 dark:text-gray-400">
+          <p>&copy; 2024 PPZ Logalyzer. Built for the UAV research community.</p>
+        </div>
+      </footer>
     </div>
   )
 }

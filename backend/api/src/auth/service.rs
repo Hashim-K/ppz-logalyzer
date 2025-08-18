@@ -30,15 +30,14 @@ impl UserService {
         let user = sqlx::query_as!(
             User,
             r#"
-            INSERT INTO users (id, username, email, password_hash, full_name, is_active, is_admin, created_at, updated_at, last_login_at, login_attempts, locked_until)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            INSERT INTO users (id, username, email, password_hash, is_active, is_admin, created_at, updated_at, last_login_at, login_attempts, locked_until)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             RETURNING *
             "#,
             Uuid::new_v4(),
             request.username,
             request.email,
             password_hash,
-            request.full_name,
             true, // is_active
             false, // is_admin
             Utc::now(),
@@ -50,8 +49,17 @@ impl UserService {
         .fetch_one(db)
         .await
         .map_err(|e| {
+            tracing::error!("Database error during user creation: {}", e);
             if e.to_string().contains("unique constraint") {
-                AuthError::InvalidCredentials
+                // Check which constraint was violated
+                let error_message = e.to_string();
+                if error_message.contains("username") || error_message.contains("users_username_key") {
+                    AuthError::UsernameExists
+                } else if error_message.contains("email") || error_message.contains("users_email_key") {
+                    AuthError::EmailExists
+                } else {
+                    AuthError::InvalidCredentials // Generic for unknown unique constraint
+                }
             } else {
                 AuthError::UserNotFound // Generic error for other DB issues
             }
