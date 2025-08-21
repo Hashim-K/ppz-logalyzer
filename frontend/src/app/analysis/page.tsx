@@ -10,7 +10,6 @@ import { Search, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useAuth } from '@/lib/auth'
 import { useSessionStore, AnalysisSession } from '@/lib/sessions'
-import Navigation from '@/components/Navigation'
 
 function AnalysisContent() {
   const searchParams = useSearchParams()
@@ -103,14 +102,11 @@ function AnalysisContent() {
   const totalPages = Math.ceil(totalMessages / messagesPerPage)
 
   return (
-    <div className="min-h-screen bg-background">
-      <Navigation />
-      
-      <div className="container mx-auto p-6 space-y-6">
-        <div>
-          <h1 className="text-2xl font-bold">Dashboard</h1>
-          <p className="text-muted-foreground">Analyze your Paparazzi UAV log data</p>
-        </div>
+    <div className="container mx-auto p-6 space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold">Dashboard</h1>
+        <p className="text-muted-foreground">Analyze your Paparazzi UAV log data</p>
+      </div>
 
         {/* Session Selection */}
         <Card>
@@ -287,7 +283,6 @@ function AnalysisContent() {
           </div>
         </CardContent>
       </Card>
-      </div>
     </div>
   )
 }

@@ -15,24 +15,37 @@ interface FileUploadItem {
   progress: number
   status: "pending" | "uploading" | "completed" | "error"
   error?: string
+  baseName: string
+  extension: string
+  paired?: boolean
+  pairId?: string
+}
+
+interface FilePair {
+  id: string
+  baseName: string
+  dataFile?: FileUploadItem
+  logFile?: FileUploadItem
+  status: "incomplete" | "complete" | "uploading" | "completed" | "error"
 }
 
 interface FileUploadProps {
   accept?: string
   maxFileSize?: number // in MB
   maxFiles?: number
-  onFilesUploaded?: (files: File[]) => void
+  onFilesUploaded?: (filePairs: FilePair[]) => void
   className?: string
 }
 
 export function FileUpload({
-  accept = ".log,.csv,.txt,.xml",
+  accept = ".log,.data",
   maxFileSize = 500,
-  maxFiles = 20,
+  maxFiles = 40, // Allow more files since we need pairs
   onFilesUploaded,
   className
 }: FileUploadProps) {
   const [files, setFiles] = useState<FileUploadItem[]>([])
+  const [filePairs, setFilePairs] = useState<FilePair[]>([])
   const [isDragOver, setIsDragOver] = useState(false)
   const [error, setError] = useState<string>("")
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -45,22 +58,82 @@ export function FileUpload({
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i]
   }
 
+  const getFileBaseName = (filename: string) => {
+    return filename.substring(0, filename.lastIndexOf('.'))
+  }
+
+  const getFileExtension = (filename: string) => {
+    return filename.substring(filename.lastIndexOf('.'))
+  }
+
   const validateFile = useCallback((file: File) => {
     if (file.size > maxFileSize * 1024 * 1024) {
       return `File "${file.name}" is too large. Maximum size is ${maxFileSize}MB.`
     }
 
-    if (accept && !accept.includes("*")) {
-      const extensions = accept.split(",").map(ext => ext.trim().toLowerCase())
-      const fileExtension = "." + file.name.split(".").pop()?.toLowerCase()
-      
-      if (!extensions.includes(fileExtension)) {
-        return `File "${file.name}" has an unsupported format. Accepted formats: ${accept}`
-      }
+    const extension = getFileExtension(file.name).toLowerCase()
+    if (extension !== '.log' && extension !== '.data') {
+      return `File "${file.name}" has an unsupported format. Only .log and .data files are accepted.`
     }
 
     return null
-  }, [maxFileSize, accept])
+  }, [maxFileSize])
+
+  const updateFilePairs = useCallback((updatedFiles: FileUploadItem[]) => {
+    const pairMap = new Map<string, FilePair>()
+    
+    updatedFiles.forEach(fileItem => {
+      const baseName = fileItem.baseName
+      
+      if (!pairMap.has(baseName)) {
+        pairMap.set(baseName, {
+          id: `pair_${baseName}`,
+          baseName,
+          status: "incomplete"
+        })
+      }
+      
+      const pair = pairMap.get(baseName)!
+      
+      if (fileItem.extension === '.data') {
+        pair.dataFile = fileItem
+      } else if (fileItem.extension === '.log') {
+        pair.logFile = fileItem
+      }
+    })
+
+    // Update pair status based on completeness
+    const pairs = Array.from(pairMap.values()).map(pair => {
+      const hasData = !!pair.dataFile
+      const hasLog = !!pair.logFile
+      
+      if (hasData && hasLog) {
+        const dataStatus = pair.dataFile!.status
+        const logStatus = pair.logFile!.status
+        
+        if (dataStatus === 'error' || logStatus === 'error') {
+          pair.status = 'error'
+        } else if (dataStatus === 'completed' && logStatus === 'completed') {
+          pair.status = 'completed'
+        } else if (dataStatus === 'uploading' || logStatus === 'uploading') {
+          pair.status = 'uploading'
+        } else {
+          pair.status = 'complete'
+        }
+      } else {
+        pair.status = 'incomplete'
+      }
+      
+      return pair
+    })
+
+    setFilePairs(pairs)
+    
+    if (onFilesUploaded) {
+      const completePairs = pairs.filter(pair => pair.status === 'complete' || pair.status === 'completed')
+      onFilesUploaded(completePairs)
+    }
+  }, [onFilesUploaded])
 
   const processFiles = useCallback((fileList: FileList | File[]) => {
     const newFiles: FileUploadItem[] = []
@@ -81,50 +154,71 @@ export function FileUpload({
         return
       }
 
+      const baseName = getFileBaseName(file.name)
+      const extension = getFileExtension(file.name)
+
       const fileItem: FileUploadItem = {
         file,
         id: Math.random().toString(36).substring(2, 15),
         progress: 0,
-        status: "pending"
+        status: "pending",
+        baseName,
+        extension
       }
 
       newFiles.push(fileItem)
     })
 
-    setFiles(prev => [...prev, ...newFiles])
+    const updatedFiles = [...files, ...newFiles]
+    setFiles(updatedFiles)
+    updateFilePairs(updatedFiles)
     
     // Simulate upload process
     newFiles.forEach(fileItem => {
       simulateUpload(fileItem.id)
     })
-
-    if (onFilesUploaded && newFiles.length > 0) {
-      onFilesUploaded(newFiles.map(item => item.file))
-    }
-  }, [files.length, maxFiles, onFilesUploaded, validateFile])
+  }, [files, maxFiles, validateFile, updateFilePairs])
 
   const simulateUpload = (fileId: string) => {
-    setFiles(prev => prev.map(f => f.id === fileId ? { ...f, status: "uploading" } : f))
+    setFiles(prev => {
+      const updated = prev.map(f => f.id === fileId ? { ...f, status: "uploading" as const } : f)
+      return updated
+    })
     
     const interval = setInterval(() => {
-      setFiles(prev => prev.map(f => {
-        if (f.id !== fileId) return f
-        
-        const newProgress = Math.min(f.progress + Math.random() * 30, 100)
-        
-        if (newProgress >= 100) {
-          clearInterval(interval)
-          return { ...f, progress: 100, status: "completed" }
-        }
-        
-        return { ...f, progress: newProgress }
-      }))
+      setFiles(prev => {
+        const updated = prev.map(f => {
+          if (f.id !== fileId) return f
+          
+          const newProgress = Math.min(f.progress + Math.random() * 30, 100)
+          
+          if (newProgress >= 100) {
+            clearInterval(interval)
+            return { ...f, progress: 100, status: "completed" as const }
+          }
+          
+          return { ...f, progress: newProgress }
+        })
+        updateFilePairs(updated)
+        return updated
+      })
     }, 500)
   }
 
   const removeFile = (fileId: string) => {
-    setFiles(prev => prev.filter(f => f.id !== fileId))
+    const updatedFiles = files.filter(f => f.id !== fileId)
+    setFiles(updatedFiles)
+    updateFilePairs(updatedFiles)
   }
+
+  const removePair = useCallback((pairId: string) => {
+    const pair = filePairs.find(p => p.id === pairId)
+    if (pair) {
+      const updatedFiles = files.filter(f => f.baseName !== pair.baseName)
+      setFiles(updatedFiles)
+      updateFilePairs(updatedFiles)
+    }
+  }, [filePairs, files, updateFilePairs])
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -156,6 +250,7 @@ export function FileUpload({
 
   const clearAll = () => {
     setFiles([])
+    setFilePairs([])
     setError("")
   }
 
@@ -164,9 +259,9 @@ export function FileUpload({
       {/* Upload Area */}
       <Card>
         <CardHeader>
-          <CardTitle>Upload Log Files</CardTitle>
+          <CardTitle>Upload PaparazziUAV Log Files</CardTitle>
           <CardDescription>
-            Drag and drop your PaparazziUAV log files here, or click to browse
+            Upload both .data and .log files with matching filenames (e.g., flight001.data + flight001.log)
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -185,10 +280,13 @@ export function FileUpload({
             <Upload className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
             <div className="space-y-2">
               <p className="text-lg font-medium">
-                {isDragOver ? "Drop files here" : "Upload your log files"}
+                {isDragOver ? "Drop files here" : "Upload your log file pairs"}
               </p>
               <p className="text-sm text-muted-foreground">
-                Supported formats: {accept} • Max {maxFileSize}MB per file • Up to {maxFiles} files
+                Required: .data and .log files • Max {maxFileSize}MB per file
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Example: flight001.data + flight001.log
               </p>
               <Button onClick={openFileDialog} className="mt-4">
                 Choose Files
@@ -215,16 +313,18 @@ export function FileUpload({
         </Alert>
       )}
 
-      {/* Files List */}
-      {files.length > 0 && (
+      {/* File Pairs Display */}
+      {filePairs.length > 0 && (
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <div>
               <CardTitle className="text-base">
-                Uploaded Files ({files.length}/{maxFiles})
+                File Pairs ({filePairs.length})
               </CardTitle>
               <CardDescription>
-                {files.filter(f => f.status === "completed").length} completed, {files.filter(f => f.status === "uploading").length} uploading
+                {filePairs.filter(p => p.status === "completed").length} completed, {" "}
+                {filePairs.filter(p => p.status === "complete").length} ready, {" "}
+                {filePairs.filter(p => p.status === "incomplete").length} incomplete
               </CardDescription>
             </div>
             <Button variant="outline" size="sm" onClick={clearAll}>
@@ -232,55 +332,155 @@ export function FileUpload({
             </Button>
           </CardHeader>
           <CardContent>
-            <div className="space-y-3">
-              {files.map(fileItem => (
-                <div key={fileItem.id} className="flex items-center gap-3 p-3 border rounded-lg">
-                  <File className="h-8 w-8 text-muted-foreground flex-shrink-0" />
-                  
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <p className="text-sm font-medium truncate">
-                        {fileItem.file.name}
-                      </p>
+            <div className="space-y-4">
+              {filePairs.map(pair => (
+                <div key={pair.id} className="border rounded-lg p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <h4 className="font-medium">{pair.baseName}</h4>
                       <Badge 
                         variant={
-                          fileItem.status === "completed" ? "default" :
-                          fileItem.status === "error" ? "destructive" :
-                          fileItem.status === "uploading" ? "secondary" : "outline"
+                          pair.status === "completed" ? "default" :
+                          pair.status === "complete" ? "secondary" :
+                          pair.status === "error" ? "destructive" :
+                          pair.status === "uploading" ? "secondary" : "outline"
                         }
                       >
-                        {fileItem.status === "completed" && <CheckCircle className="h-3 w-3 mr-1" />}
-                        {fileItem.status === "error" && <AlertCircle className="h-3 w-3 mr-1" />}
-                        {fileItem.status.charAt(0).toUpperCase() + fileItem.status.slice(1)}
+                        {pair.status === "completed" && <CheckCircle className="h-3 w-3 mr-1" />}
+                        {pair.status === "error" && <AlertCircle className="h-3 w-3 mr-1" />}
+                        {pair.status === "complete" ? "Ready" : 
+                         pair.status === "incomplete" ? "Missing files" :
+                         pair.status.charAt(0).toUpperCase() + pair.status.slice(1)}
                       </Badge>
                     </div>
-                    
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground mb-2">
-                      <span>{formatFileSize(fileItem.file.size)}</span>
-                      {fileItem.status === "uploading" && (
-                        <span>{Math.round(fileItem.progress)}%</span>
-                      )}
-                    </div>
-                    
-                    {(fileItem.status === "uploading" || fileItem.status === "pending") && (
-                      <Progress value={fileItem.progress} className="h-1" />
-                    )}
-                    
-                    {fileItem.error && (
-                      <p className="text-xs text-destructive mt-1">{fileItem.error}</p>
-                    )}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => removePair(pair.id)}
+                      className="h-8 w-8 p-0"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
                   </div>
                   
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => removeFile(fileItem.id)}
-                    className="h-8 w-8 p-0 flex-shrink-0"
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {/* Data file */}
+                    <div className={cn(
+                      "flex items-center gap-3 p-3 border rounded",
+                      pair.dataFile ? "bg-green-50 border-green-200" : "bg-gray-50 border-gray-200 border-dashed"
+                    )}>
+                      <File className="h-6 w-6 text-muted-foreground flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        {pair.dataFile ? (
+                          <>
+                            <p className="text-sm font-medium truncate">
+                              {pair.dataFile.file.name}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {formatFileSize(pair.dataFile.file.size)}
+                              {pair.dataFile.status === "uploading" && 
+                                ` • ${Math.round(pair.dataFile.progress)}%`
+                              }
+                            </p>
+                            {pair.dataFile.status === "uploading" && (
+                              <Progress value={pair.dataFile.progress} className="h-1 mt-1" />
+                            )}
+                          </>
+                        ) : (
+                          <p className="text-sm text-muted-foreground">
+                            {pair.baseName}.data (missing)
+                          </p>
+                        )}
+                      </div>
+                      {pair.dataFile && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => removeFile(pair.dataFile!.id)}
+                          className="h-6 w-6 p-0"
+                        >
+                          <X className="h-3 w-3" />
+                        </Button>
+                      )}
+                    </div>
+
+                    {/* Log file */}
+                    <div className={cn(
+                      "flex items-center gap-3 p-3 border rounded",
+                      pair.logFile ? "bg-blue-50 border-blue-200" : "bg-gray-50 border-gray-200 border-dashed"
+                    )}>
+                      <File className="h-6 w-6 text-muted-foreground flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        {pair.logFile ? (
+                          <>
+                            <p className="text-sm font-medium truncate">
+                              {pair.logFile.file.name}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {formatFileSize(pair.logFile.file.size)}
+                              {pair.logFile.status === "uploading" && 
+                                ` • ${Math.round(pair.logFile.progress)}%`
+                              }
+                            </p>
+                            {pair.logFile.status === "uploading" && (
+                              <Progress value={pair.logFile.progress} className="h-1 mt-1" />
+                            )}
+                          </>
+                        ) : (
+                          <p className="text-sm text-muted-foreground">
+                            {pair.baseName}.log (missing)
+                          </p>
+                        )}
+                      </div>
+                      {pair.logFile && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => removeFile(pair.logFile!.id)}
+                          className="h-6 w-6 p-0"
+                        >
+                          <X className="h-3 w-3" />
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {pair.status === "incomplete" && (
+                    <Alert className="mt-3">
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertDescription>
+                        This file pair is incomplete. Please upload both {pair.baseName}.data and {pair.baseName}.log files.
+                      </AlertDescription>
+                    </Alert>
+                  )}
                 </div>
               ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Instructions */}
+      {filePairs.length === 0 && files.length === 0 && (
+        <Card>
+          <CardContent className="pt-6">
+            <div className="text-center space-y-4">
+              <div className="space-y-2">
+                <h3 className="font-medium">Expected File Format</h3>
+                <div className="text-sm text-muted-foreground space-y-1">
+                  <p>• Upload both .data and .log files for each flight session</p>
+                  <p>• Files must have matching names (e.g., flight001.data + flight001.log)</p>
+                  <p>• Each complete pair will create one analysis session</p>
+                </div>
+              </div>
+              <div className="bg-muted p-4 rounded-lg">
+                <p className="text-sm font-medium mb-2">Example file pair:</p>
+                <div className="flex items-center justify-center gap-4 text-xs">
+                  <span className="bg-green-100 text-green-800 px-2 py-1 rounded">flight001.data</span>
+                  <span className="text-muted-foreground">+</span>
+                  <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded">flight001.log</span>
+                </div>
+              </div>
             </div>
           </CardContent>
         </Card>

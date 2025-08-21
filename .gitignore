@@ -179,3 +179,5 @@ Cargo.lock
 # End of https://www.toptal.com/developers/gitignore/api/node,rust,visualstudiocode
 
 frontend/oldUI/
+
+example_data/

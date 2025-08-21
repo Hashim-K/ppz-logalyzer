@@ -7,119 +7,95 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
-import { CheckCircle, AlertCircle, Clock, X } from "lucide-react"
-import { mockLogs, ProcessedLog, formatFileSize } from "@/lib/mock-data"
-import Navigation from "@/components/Navigation"
+import { CheckCircle, AlertCircle, Clock, X, FileText, Database } from "lucide-react"
+import { toast } from "sonner"
 
-interface UploadingFile {
+interface FilePair {
   id: string
-  file: File
+  baseName: string
+  dataFile?: { file: File }
+  logFile?: { file: File }
+  status: "incomplete" | "complete" | "uploading" | "completed" | "error"
+}
+
+interface ProcessingPair {
+  id: string
+  baseName: string
   progress: number
-  status: 'uploading' | 'processing' | 'completed' | 'error'
+  status: 'processing' | 'completed' | 'error'
   error?: string
 }
 
 export default function UploadPage() {
-  const [uploadingFiles, setUploadingFiles] = useState<UploadingFile[]>([])
+  const [processingPairs, setProcessingPairs] = useState<ProcessingPair[]>([])
   const router = useRouter()
 
-  const generateLogId = () => {
+  const generateSessionId = () => {
     const timestamp = Date.now()
     const random = Math.random().toString(36).substr(2, 4)
-    return `log_${timestamp}_${random}`
+    return `session_${timestamp}_${random}`
   }
 
-  const simulateFileProcessing = (uploadingFile: UploadingFile) => {
-    const { id, file } = uploadingFile
+  const handleFilesUploaded = (filePairs: FilePair[]) => {
+    // Only process complete pairs
+    const completePairs = filePairs.filter(pair => 
+      pair.status === 'complete' || pair.status === 'completed'
+    )
     
-    // Simulate upload progress
+    if (completePairs.length === 0) return
+
+    toast.success(`Starting processing for ${completePairs.length} file pair(s)`)
+
+    const newProcessingPairs: ProcessingPair[] = completePairs.map(pair => ({
+      id: generateSessionId(),
+      baseName: pair.baseName,
+      progress: 0,
+      status: 'processing'
+    }))
+
+    setProcessingPairs(prev => [...prev, ...newProcessingPairs])
+
+    // Simulate processing for each pair
+    newProcessingPairs.forEach(pair => {
+      simulatePairProcessing(pair.id)
+    })
+  }
+
+  const simulatePairProcessing = (pairId: string) => {
     let progress = 0
-    const uploadInterval = setInterval(() => {
+    const interval = setInterval(() => {
       progress += Math.random() * 15 + 5 // Random progress between 5-20%
       
-      setUploadingFiles(prev => 
-        prev.map(f => 
-          f.id === id ? { ...f, progress: Math.min(progress, 100) } : f
+      setProcessingPairs(prev => 
+        prev.map(p => 
+          p.id === pairId ? { ...p, progress: Math.min(progress, 100) } : p
         )
       )
       
       if (progress >= 100) {
-        clearInterval(uploadInterval)
+        clearInterval(interval)
         
-        // Move to processing phase
-        setUploadingFiles(prev => 
-          prev.map(f => 
-            f.id === id ? { ...f, status: 'processing', progress: 0 } : f
+        // Mark as completed
+        setProcessingPairs(prev => 
+          prev.map(p => 
+            p.id === pairId ? { ...p, progress: 100, status: 'completed' } : p
           )
         )
-        
-        // Simulate processing with chance of failure
-        const processingTime = Math.random() * 3000 + 2000 // 2-5 seconds
-        const shouldFail = Math.random() < 0.15 // 15% chance of failure
-        
-        setTimeout(() => {
-          if (shouldFail) {
-            setUploadingFiles(prev => 
-              prev.map(f => 
-                f.id === id ? { 
-                  ...f, 
-                  status: 'error',
-                  error: 'Failed to parse log format. Please ensure the file is a valid PaparazziUAV log file.'
-                } : f
-              )
-            )
-          } else {
-            // Successfully processed - add to mock data and mark complete
-            const logId = generateLogId()
-            const newLog: ProcessedLog = {
-              id: logId,
-              filename: file.name,
-              uploadDate: new Date(),
-              fileSize: file.size,
-              status: 'completed',
-              maxAltitude: Math.floor(Math.random() * 200) + 50, // 50-250m
-              maxSpeed: Math.floor(Math.random() * 40) + 10, // 10-50 m/s
-              flightDuration: Math.floor(Math.random() * 300) + 120, // 2-7 minutes
-              recordCount: Math.floor(Math.random() * 50000) + 10000, // 10k-60k records
-            }
-            
-            // Add to mock logs (in real app, this would be API call)
-            mockLogs.unshift(newLog)
-            
-            setUploadingFiles(prev => 
-              prev.map(f => 
-                f.id === id ? { ...f, status: 'completed' } : f
-              )
-            )
-          }
-        }, processingTime)
+
+        const pair = processingPairs.find(p => p.id === pairId)
+        if (pair) {
+          toast.success(`Processing completed for ${pair.baseName}`)
+        }
       }
-    }, 200) // Update every 200ms
+    }, 800)
   }
 
-  const handleFilesUploaded = (files: File[]) => {
-    const newUploadingFiles: UploadingFile[] = files.map(file => ({
-      id: Math.random().toString(36).substr(2, 9),
-      file,
-      progress: 0,
-      status: 'uploading' as const
-    }))
-    
-    setUploadingFiles(prev => [...prev, ...newUploadingFiles])
-    
-    // Start processing each file
-    newUploadingFiles.forEach(uploadingFile => {
-      setTimeout(() => simulateFileProcessing(uploadingFile), 100)
-    })
+  const removePair = (pairId: string) => {
+    setProcessingPairs(prev => prev.filter(p => p.id !== pairId))
   }
 
-  const removeUploadingFile = (id: string) => {
-    setUploadingFiles(prev => prev.filter(f => f.id !== id))
-  }
-
-  const getStatusIcon = (status: UploadingFile['status']) => {
+  const getStatusIcon = (status: ProcessingPair['status']) => {
     switch (status) {
-      case 'uploading':
       case 'processing':
         return <Clock className="h-4 w-4" />
       case 'completed':
@@ -129,10 +105,8 @@ export default function UploadPage() {
     }
   }
 
-  const getStatusBadge = (status: UploadingFile['status']) => {
+  const getStatusBadge = (status: ProcessingPair['status']) => {
     switch (status) {
-      case 'uploading':
-        return <Badge variant="secondary">Uploading</Badge>
       case 'processing':
         return <Badge variant="secondary">Processing</Badge>
       case 'completed':
@@ -143,106 +117,122 @@ export default function UploadPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <Navigation />
-      
-      <main className="container mx-auto px-4 py-8">
-        <div className="space-y-6">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">Upload Log Files</h1>
-            <p className="text-muted-foreground">
-              Upload your PaparazziUAV log files for analysis and visualization
-            </p>
-          </div>
+    <main className="container mx-auto px-4 py-8">
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Upload Log Files</h1>
+          <p className="text-muted-foreground">
+            Upload your PaparazziUAV log files for analysis and visualization
+          </p>
+        </div>
 
-          <FileUpload
-            onFilesUploaded={handleFilesUploaded}
-            accept=".log,.csv,.txt,.xml"
-            maxFileSize={500} // 500MB for large log files
-            maxFiles={20}
-          />
+        <FileUpload
+          onFilesUploaded={handleFilesUploaded}
+          accept=".log,.data"
+          maxFileSize={500} // 500MB for large log files
+          maxFiles={40} // Allow more files since we need pairs
+        />
 
-      {uploadingFiles.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Upload Progress</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {uploadingFiles.map(uploadingFile => (
-              <div key={uploadingFile.id} className="flex items-center gap-4 p-4 border rounded-lg">
-                <div className="flex-shrink-0">
-                  {getStatusIcon(uploadingFile.status)}
+        {processingPairs.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Processing Progress</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {processingPairs.map(pair => (
+                <div key={pair.id} className="flex items-center gap-4 p-4 border rounded-lg">
+                  <div className="flex-shrink-0">
+                    {getStatusIcon(pair.status)}
+                  </div>
+                  
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-sm font-medium">{pair.baseName}</p>
+                      <div className="flex items-center gap-2">
+                        {getStatusBadge(pair.status)}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => removePair(pair.id)}
+                          className="h-6 w-6 p-0"
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                    
+                    <div className="space-y-2">
+                      {pair.status === 'processing' && (
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                          <span>Processing telemetry data...</span>
+                          <span>{Math.round(pair.progress)}%</span>
+                        </div>
+                      )}
+                      
+                      {pair.status === 'completed' && (
+                        <div className="flex items-center gap-4 text-xs">
+                          <div className="flex items-center gap-1 text-green-600">
+                            <Database className="h-3 w-3" />
+                            <span>Data processed</span>
+                          </div>
+                          <div className="flex items-center gap-1 text-blue-600">
+                            <FileText className="h-3 w-3" />
+                            <span>Log parsed</span>
+                          </div>
+                        </div>
+                      )}
+                      
+                      {(pair.status === 'processing') && (
+                        <Progress value={pair.progress} className="h-2" />
+                      )}
+                      
+                      {pair.error && (
+                        <p className="text-xs text-destructive">{pair.error}</p>
+                      )}
+                    </div>
+                  </div>
                 </div>
-                
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between mb-2">
-                    <p className="text-sm font-medium truncate">{uploadingFile.file.name}</p>
-                    <div className="flex items-center gap-2">
-                      {getStatusBadge(uploadingFile.status)}
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => removeUploadingFile(uploadingFile.id)}
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-                  
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground mb-2">
-                    <span>{formatFileSize(uploadingFile.file.size)}</span>
-                    <span>•</span>
-                    <span>{uploadingFile.file.type || 'Unknown type'}</span>
-                  </div>
-                  
-                  {(uploadingFile.status === 'uploading' || uploadingFile.status === 'processing') && (
-                    <div className="space-y-1">
-                      <Progress value={uploadingFile.progress} className="h-2" />
-                      <p className="text-xs text-muted-foreground">
-                        {uploadingFile.status === 'uploading' ? 'Uploading...' : 'Processing log data...'}
-                        {uploadingFile.status === 'uploading' && ` ${Math.round(uploadingFile.progress)}%`}
-                      </p>
-                    </div>
-                  )}
-                  
-                  {uploadingFile.status === 'completed' && (
-                    <div className="flex gap-2 mt-2">
-                      <Button
-                        size="sm"
-                        onClick={() => {
-                          // Find the corresponding log in mockLogs and navigate to it
-                          const matchingLog = mockLogs.find(log => 
-                            log.filename === uploadingFile.file.name &&
-                            log.status === 'completed'
-                          )
-                          if (matchingLog) {
-                            router.push(`/dashboard/${matchingLog.id}`)
-                          }
-                        }}
-                      >
-                        View Analysis
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => router.push('/')}
-                      >
-                        Back to Logs
-                      </Button>
-                    </div>
-                  )}
-                  
-                  {uploadingFile.status === 'error' && uploadingFile.error && (
-                    <p className="text-xs text-red-500 mt-2">{uploadingFile.error}</p>
-                  )}
+              ))}
+            </CardContent>
+          </Card>
+        )}
+
+        {processingPairs.filter(p => p.status === 'completed').length > 0 && (
+          <Card>
+            <CardContent className="pt-6">
+              <div className="text-center">
+                <CheckCircle className="mx-auto h-12 w-12 text-green-500 mb-4" />
+                <h3 className="text-lg font-medium mb-2">Processing Complete!</h3>
+                <p className="text-muted-foreground mb-4">
+                  Your log files have been processed and are ready for analysis.
+                </p>
+                <div className="flex gap-2 justify-center">
+                  <Button onClick={() => router.push('/sessions')}>
+                    View Sessions
+                  </Button>
+                  <Button variant="outline" onClick={() => router.push('/dashboard')}>
+                    Go to Dashboard
+                  </Button>
                 </div>
               </div>
-            ))}
-          </CardContent>
-        </Card>
-      )}
-        </div>
-      </main>
-    </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Instructions when no files are being processed */}
+        {processingPairs.length === 0 && (
+          <Card>
+            <CardContent className="pt-6">
+              <div className="text-center">
+                <h3 className="text-lg font-medium mb-2">Ready to Upload</h3>
+                <p className="text-muted-foreground">
+                  Select your PaparazziUAV log file pairs above to begin the upload and processing workflow.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+      </div>
+    </main>
   )
 }

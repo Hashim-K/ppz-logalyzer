@@ -1,76 +1,90 @@
-'use client'
+"use client";
 
-import { usePathname, useRouter } from 'next/navigation'
-import { Button } from '@/components/ui/button'
-import { BarChart3, LogOut } from 'lucide-react'
-import { useAuth } from '@/lib/auth'
-import { toast } from 'sonner'
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { Moon, Sun, Settings, LogOut, User } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { useTheme } from "next-themes";
 
-interface NavigationProps {
-  className?: string
-}
+const navItems = [
+	{ name: "Sessions", href: "/sessions" },
+	{ name: "Dashboard", href: "/dashboard" },
+	{ name: "Upload", href: "/upload" },
+	{ name: "Settings", href: "/settings" },
+];
 
-export default function Navigation({ className = '' }: NavigationProps) {
-  const pathname = usePathname()
-  const router = useRouter()
-  const { user, logout } = useAuth()
+export default function Navigation() {
+	const pathname = usePathname();
+	const { theme, setTheme } = useTheme();
 
-  const handleLogout = () => {
-    logout()
-    toast.success('Logged out successfully', {
-      description: 'See you next time!',
-    })
-    router.push('/')
-  }
-
-  const navItems = [
-    { name: 'Sessions', path: '/sessions', active: pathname === '/sessions' },
-    { name: 'Upload', path: '/upload', active: pathname === '/upload' },
-    { name: 'Analysis', path: '/dashboard', active: pathname === '/dashboard' || pathname?.startsWith('/analysis') },
-    { name: 'Settings', path: '/settings', active: pathname === '/settings' },
-  ]
-
-  return (
-    <header className={`border-b bg-background ${className}`}>
-      <div className="flex h-16 items-center px-4 justify-between">
-        <div className="flex items-center space-x-8">
-          <div className="flex items-center space-x-2">
-            <BarChart3 className="h-8 w-8 text-primary" />
-            <h1 className="text-2xl font-bold">Paparazzi UAV</h1>
-          </div>
-          
-          {/* Navigation Tabs */}
-          <nav className="flex items-center space-x-1">
-            {navItems.map((item) => (
-              <Button
-                key={item.path}
-                variant={item.active ? 'default' : 'ghost'}
-                size="sm"
-                onClick={() => router.push(item.path)}
-                className={item.active ? '' : 'hover:bg-muted'}
-              >
-                {item.name}
-              </Button>
-            ))}
-          </nav>
-        </div>
-        
-        <div className="flex items-center space-x-4">
-          {user && (
-            <span className="text-sm text-muted-foreground">
-              Welcome, {user.username}
-            </span>
-          )}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleLogout}
-          >
-            <LogOut className="h-4 w-4 mr-2" />
-            Logout
-          </Button>
-        </div>
-      </div>
-    </header>
-  )
+	return (
+		<nav className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+			<div className="container flex h-14 items-center">
+				<div className="mr-4 hidden md:flex">
+					<Link href="/" className="mx-6 flex items-center space-x-2">
+						<span className="hidden font-bold sm:inline-block">
+							PPZ LogAnalyzer
+						</span>
+					</Link>
+					<nav className="flex items-center space-x-6 text-sm font-medium">
+						{navItems.map((item) => (
+							<Link
+								key={item.href}
+								href={item.href}
+								className={`transition-colors hover:text-foreground/80 ${
+									pathname === item.href
+										? "text-foreground"
+										: "text-foreground/60"
+								}`}
+							>
+								{item.name}
+							</Link>
+						))}
+					</nav>
+				</div>
+				<div className="flex flex-1 items-center justify-between space-x-2 md:justify-end">
+					<div className="w-full flex-1 md:w-auto md:flex-none">
+						{/* Search can be added here later */}
+					</div>
+					<nav className="flex items-center space-x-2">
+						<Button
+							variant="ghost"
+							size="icon"
+							onClick={() => setTheme(theme === "light" ? "dark" : "light")}
+						>
+							<Sun className="h-[1.2rem] w-[1.2rem] rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
+							<Moon className="absolute h-[1.2rem] w-[1.2rem] rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
+							<span className="sr-only">Toggle theme</span>
+						</Button>
+						<DropdownMenu>
+							<DropdownMenuTrigger asChild>
+								<Button variant="ghost" size="icon">
+									<User className="h-[1.2rem] w-[1.2rem]" />
+									<span className="sr-only">User menu</span>
+								</Button>
+							</DropdownMenuTrigger>
+							<DropdownMenuContent align="end">
+								<DropdownMenuItem asChild>
+									<Link href="/settings">
+										<Settings className="mr-2 h-4 w-4" />
+										Settings
+									</Link>
+								</DropdownMenuItem>
+								<DropdownMenuItem>
+									<LogOut className="mr-2 h-4 w-4" />
+									Log out
+								</DropdownMenuItem>
+							</DropdownMenuContent>
+						</DropdownMenu>
+					</nav>
+				</div>
+			</div>
+		</nav>
+	);
 }
